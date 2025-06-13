@@ -10,4 +10,7 @@ pip install -r requirements.txt
 python manage.py collectstatic --no-input
 
 # Aplicar las migraciones de la base de datos
-python manage.py migrate 
+python manage.py migrate
+
+# Crear el superusuario en producción
+python manage.py create_superuser_on_deploy 

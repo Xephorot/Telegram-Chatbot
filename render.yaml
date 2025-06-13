@@ -37,4 +37,12 @@ services:
       
       # Indica al settings.py que estamos en un entorno de producción.
       - key: DEBUG
-        value: False 
+        value: False
+      
+      # Variables para la creación automática de un superusuario
+      - key: DJANGO_SUPERUSER_USERNAME
+        value: admin_render # Puedes cambiar esto
+      - key: DJANGO_SUPERUSER_EMAIL
+        value: admin@example.com # Debes cambiar esto por tu email
+      - key: DJANGO_SUPERUSER_PASSWORD
+        sync: false # ¡IMPORTANTE! Configura esto como un 'Secret' en el dashboard de Render 
