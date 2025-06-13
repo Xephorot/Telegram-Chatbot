@@ -1,0 +1,40 @@
+# render.yaml - Infraestructura como Código para el proyecto Chatbot en Render
+
+# Define la base de datos PostgreSQL que usará la aplicación.
+databases:
+  - name: chatbot-postgres-db
+    plan: free # Usa el plan gratuito de Render, que es suficiente para desarrollo y pruebas.
+    databaseName: chatbot_db # Nombre de la base de datos dentro de la instancia de Postgres.
+    user: chatbot_user # Nombre de usuario para la base de datos.
+
+# Define los servicios que componen la aplicación. En este caso, solo el backend de Django.
+services:
+  # Configuración del servicio web para el backend de Django.
+  - type: web
+    name: chatbot-backend-django
+    plan: free # Usa el plan gratuito para el servicio web.
+    runtime: python # Especifica que el entorno de ejecución es Python.
+    
+    # Comandos para construir y ejecutar la aplicación.
+    buildCommand: "./setup.sh" # Render ejecutará este script para instalar dependencias y realizar migraciones.
+    startCommand: "gunicorn chatbot_project.wsgi:application" # Comando para iniciar el servidor de producción Gunicorn.
+
+    # Configuración de las variables de entorno para el servicio web.
+    envVars:
+      # La URL de la base de datos se obtiene automáticamente del servicio de base de datos definido arriba.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: chatbot-postgres-db
+          property: connectionString
+      
+      # Genera automáticamente una clave secreta segura para Django en el entorno de producción.
+      - key: SECRET_KEY
+        generateValue: true
+      
+      # Define el número de workers que Gunicorn usará. Es una práctica recomendada.
+      - key: WEB_CONCURRENCY
+        value: 4
+      
+      # Indica al settings.py que estamos en un entorno de producción.
+      - key: DEBUG
+        value: False 
