@@ -1,0 +1,74 @@
+# Archivos de entorno
+.env
+.env.*
+!/.env.example
+
+# Entorno virtual
+venv/
+env/
+.venv/
+
+# Base de datos
+db.sqlite3
+/postgres_data/
+
+# Archivos de caché y compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Archivos de registro
+*.log
+logs/
+*.log.*
+
+# Dependencias de Python
+pip-wheel-metadata/
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Archivos de sistema operativo
+# macOS
+.DS_Store
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+# Linux
+.swp
+*~
+
+# Archivos de Django
+*.mo
+*.pot
+
+# Archivos de test
+.pytest_cache/
+.coverage
+.tox/
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Archivos de Docker
+.dockerignore
+docker-compose.override.yml 
