@@ -154,4 +154,13 @@ REST_FRAMEWORK = {
 }
 
 # CORS Configuration
-CORS_ALLOW_ALL_ORIGINS = True  # Solo en desarrollo, cambiar en producción
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    # En producción, solo permite solicitudes desde dominios específicos de Botpress.
+    CORS_ALLOWED_ORIGINS = [
+        "https://botpress.cloud",
+        "https://studio.botpress.cloud",
+    ]
+    # Opcional: si necesitas que Botpress envíe credenciales (cookies, etc.), descomenta la siguiente línea:
+    # CORS_ALLOW_CREDENTIALS = True
