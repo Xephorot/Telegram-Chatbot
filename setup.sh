@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# exit on error
+set -o errexit
 
 # Crear y activar el entorno virtual si no existe
 if [ ! -d "venv" ]; then
@@ -43,4 +45,7 @@ echo "Configuración completada. Ahora puedes ejecutar el bot con:"
 echo "python manage.py run_bot"
 echo ""
 echo "O iniciar el servidor de desarrollo:"
-echo "python manage.py runserver" 
+echo "python manage.py runserver"
+
+# Recolectar archivos estáticos para producción
+python manage.py collectstatic --no-input 
