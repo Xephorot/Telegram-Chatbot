@@ -16,7 +16,7 @@ services:
     runtime: python # Especifica que el entorno de ejecución es Python.
     
     # Comandos para construir y ejecutar la aplicación.
-    buildCommand: "./setup.sh" # Render ejecutará este script para instalar dependencias y realizar migraciones.
+    buildCommand: "./build.sh" # Render ejecutará este script para instalar dependencias y realizar migraciones.
     startCommand: "gunicorn chatbot_project.wsgi:application" # Comando para iniciar el servidor de producción Gunicorn.
 
     # Configuración de las variables de entorno para el servicio web.
