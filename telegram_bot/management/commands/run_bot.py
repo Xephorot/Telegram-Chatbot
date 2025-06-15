@@ -263,13 +263,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 class Command(BaseCommand):
     help = "Inicia el bot de Telegram integrado con Gemini."
 
-    def handle(self, *args, **options):
+    async def handle(self, *args, **options):
+        self.stdout.write(self.style.SUCCESS("--- Iniciando el comando run_bot ---"))
+
         token = os.environ.get("TELEGRAM_BOT_TOKEN")
         if not token:
             self.stderr.write(
-                self.style.ERROR("La variable de entorno TELEGRAM_BOT_TOKEN no está definida.")
+                self.style.ERROR("FATAL: La variable de entorno TELEGRAM_BOT_TOKEN no está definida.")
             )
             return
+
+        gemini_key = os.environ.get("GEMINI_API_KEY")
+        if not gemini_key:
+            self.stderr.write(
+                self.style.ERROR("FATAL: La variable de entorno GEMINI_API_KEY no está definida.")
+            )
+            return
+
+        self.stdout.write(self.style.SUCCESS("Tokens de Telegram y Gemini encontrados. Configurando bot..."))
 
         logging.basicConfig(
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -293,15 +304,14 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS("Eliminando webhook anterior (si existe) y comenzando polling..."))
 
-        # Asegurar que no haya un webhook activo (ej. configurado por Botpress)
-        try:
-            # delete_webhook es sin bloqueo; usamos run_until_complete para garantizar ejecución antes de polling
-            import asyncio
+        # Iniciar el bot en modo asíncrono
+        async with app:
+            try:
+                await app.bot.delete_webhook(drop_pending_updates=True)
+                self.stdout.write(self.style.SUCCESS("Webhook eliminado correctamente."))
+            except Exception as e:
+                self.stdout.write(self.style.WARNING(f"No se pudo eliminar el webhook, puede que no existiera. Error: {e}"))
 
-            asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
-        except Exception as exc:
-            logger.warning("No se pudo eliminar el webhook: %s", exc)
-
-        self.stdout.write(self.style.SUCCESS("🤖 Bot de Telegram iniciado en modo polling."))
-
-        app.run_polling(drop_pending_updates=True) 
+            self.stdout.write(self.style.SUCCESS("🤖 Bot de Telegram iniciado. Esperando updates..."))
+            await app.start_polling(drop_pending_updates=True)
+            await app.run_until_disconnected() 
