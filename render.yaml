@@ -45,4 +45,30 @@ services:
       - key: DJANGO_SUPERUSER_EMAIL
         value: admin@example.com # Debes cambiar esto por tu email
       - key: DJANGO_SUPERUSER_PASSWORD
-        sync: false # ¡IMPORTANTE! Configura esto como un 'Secret' en el dashboard de Render 
+        sync: false # ¡IMPORTANTE! Configura esto como un 'Secret' en el dashboard de Render
+      # Claves para el bot e IA (añádelas como "Secrets")
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+
+# Servicio worker para el bot de Telegram
+  - type: worker
+    name: telegram-bot-worker
+    plan: free
+    runtime: python
+    buildCommand: "./build.sh"  # Reutiliza el mismo build
+    startCommand: "python manage.py run_bot"
+    envVars:
+      - key: DATABASE_URL  # Conecta al mismo PostgreSQL
+        fromDatabase:
+          name: chatbot-postgres-db
+          property: connectionString
+      # Secret key no requerida por el worker, pero puede ser útil para Django.
+      - key: SECRET_KEY
+        generateValue: true
+      # Claves del bot e IA
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false 
