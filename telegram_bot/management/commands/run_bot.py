@@ -10,6 +10,7 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     filters,
+    Defaults,
 )
 
 import google.generativeai as genai
@@ -274,10 +275,11 @@ class Command(BaseCommand):
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
         )
 
+        defaults = Defaults(parse_mode=ParseMode.MARKDOWN)
         app = (
             ApplicationBuilder()
             .token(token)
-            .parse_mode(ParseMode.MARKDOWN)
+            .defaults(defaults)
             .build()
         )
 
