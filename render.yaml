@@ -14,7 +14,6 @@ services:
     name: chatbot-backend-django
     plan: free # Usa el plan gratuito para el servicio web.
     runtime: python # Especifica que el entorno de ejecución es Python.
-    pythonVersion: '3.12' # Fijar la versión de Python a una estable
     
     # Comandos para construir y ejecutar la aplicación.
     buildCommand: "./build.sh" # Render ejecutará este script para instalar dependencias y realizar migraciones.
@@ -22,6 +21,8 @@ services:
 
     # Configuración de las variables de entorno para el servicio web.
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
       # La URL de la base de datos se obtiene automáticamente del servicio de base de datos definido arriba.
       - key: DATABASE_URL
         fromDatabase:
