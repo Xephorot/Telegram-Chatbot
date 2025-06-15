@@ -1,7 +1,8 @@
+dj-database-url==2.1.0
+Django==5.2.3
 django-cors-headers==4.4.0
 django-filter==23.5
 djangorestframework==3.16.0
-dj-database-url==2.1.0
 google-generativeai==0.8.5
 gunicorn==22.0.0
 honcho==1.1.0
@@ -9,4 +10,5 @@ Markdown==3.6
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1
 python-telegram-bot==22.1
+setuptools==69.5.1
 whitenoise[brotli] 
