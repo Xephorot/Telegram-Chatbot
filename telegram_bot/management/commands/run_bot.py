@@ -16,6 +16,7 @@ import google.generativeai as genai
 
 from telegram_bot.models import (
     Product,
+    Category,
     User as BotUser,
     Conversation,
     Message as BotMessage,
@@ -214,6 +215,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     _log_message(conversation, "user", user_text)
 
+    # ---------------- Heuristics before invoking Gemini ----------------
+    user_text_lower = user_text.lower()
+
+    # 1. Catálogo completo
+    if any(word in user_text_lower for word in ["catálogo", "catalogo", "productos disponibles", "catalogo completo", "todo el catalogo"]):
+        products_text = _format_product_list(limit=100)
+        _log_message(conversation, "bot", products_text)
+        await update.message.reply_text(products_text)
+        return
+
+    # 2. Solicitud de productos por categoría (coincidencia exacta del nombre)
+    for category in Category.objects.all():
+        if category.name.lower() in user_text_lower:
+            products = Product.objects.filter(category=category)
+            if products.exists():
+                lines = [f"{p.id}. {p.name} — ${p.price} (stock: {p.stock})" for p in products]
+                text = "\n".join(lines)
+            else:
+                text = f"Actualmente no hay productos en la categoría {category.name}."
+            _log_message(conversation, "bot", text)
+            await update.message.reply_text(text)
+            return
+
+    # ---------------- Gemini fallback ----------------
     # Build context and prompt
     prompt = (
         "Eres un chatbot de ventas amigable para una tienda. "
@@ -264,6 +289,17 @@ class Command(BaseCommand):
         app.add_handler(CommandHandler("recomendar", recomendar))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-        self.stdout.write(self.style.SUCCESS("🤖 Bot de Telegram iniciado. Presiona Ctrl+C para detener."))
+        self.stdout.write(self.style.SUCCESS("Eliminando webhook anterior (si existe) y comenzando polling..."))
 
-        app.run_polling() 
+        # Asegurar que no haya un webhook activo (ej. configurado por Botpress)
+        try:
+            # delete_webhook es sin bloqueo; usamos run_until_complete para garantizar ejecución antes de polling
+            import asyncio
+
+            asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
+        except Exception as exc:
+            logger.warning("No se pudo eliminar el webhook: %s", exc)
+
+        self.stdout.write(self.style.SUCCESS("🤖 Bot de Telegram iniciado en modo polling."))
+
+        app.run_polling(drop_pending_updates=True) 
