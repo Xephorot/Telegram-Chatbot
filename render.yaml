@@ -22,7 +22,7 @@ services:
     # Configuración de las variables de entorno para el servicio web.
     envVars:
       - key: PYTHON_VERSION
-        value: "3.12"
+        value: "3.12.4"
       # La URL de la base de datos se obtiene automáticamente del servicio de base de datos definido arriba.
       - key: DATABASE_URL
         fromDatabase:
