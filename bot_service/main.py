@@ -204,7 +204,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ `/productos` - Ver todos nuestros artículos.\n"
         "✅ `/reservar <ID> <cantidad>` - Asegura un producto.\n"
         "✅ `/ayuda` - Resuelve tus dudas sobre nosotros.\n"
-        "✅ `/reservas` - Ver tus pedidos o reservas actuales.\n\n"
+        "✅ `/reservas` - Ver tus pedidos o reservas actuales.\n"
+        "✅ `/cancelar <ID>` - Cancela una reserva.\n\n"
         "También puedes escribirme lo que necesites y usaré mi IA para ayudarte."
     )
     
@@ -399,11 +400,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "que reservé",
         "qué reservé",
         "que reserve",
+        "que tengo reservado",
+        "qué tengo reservado",
+        "reservado",
+        "reservados",
         "mis ordenes",
         "mis órdenes",
     ]
     if any(k in lower_text for k in orders_keywords):
         orders_text = get_orders_from_api(user.id)
+        # Si el usuario no tiene reservas, orientar al comando explícito
+        if orders_text.startswith("No tienes") or orders_text.startswith("No pude"):
+            orders_text = "No tengo información sobre tus reservas en este momento. Usa el comando /reservas para consultarlas."
+
         await update.message.reply_text(orders_text, parse_mode=None)
         await log_conversation(user=user, user_text=user_text, bot_text=orders_text)
         return  # No pasamos a IA
@@ -526,6 +535,54 @@ async def reservas_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_text=orders_text,
     )
 
+# --- Cancelar reserva ---
+
+def cancel_order_api(order_id: int) -> str:
+    """Intenta cancelar (o eliminar) un pedido."""
+    if not API_BASE_URL:
+        return "Error: La URL de la API no está configurada."
+
+    try:
+        # Intentamos actualizar el estado a cancelled (PATCH)
+        patch_resp = requests.patch(
+            f"{API_BASE_URL}/api/orders/{order_id}/",
+            json={"status": "cancelled"},
+        )
+
+        if patch_resp.status_code == 404:
+            return "❌ No se encontró un pedido con ese ID."
+        if patch_resp.status_code not in (200, 202):
+            # Si no acepta PATCH, probamos DELETE como fallback
+            del_resp = requests.delete(f"{API_BASE_URL}/api/orders/{order_id}/")
+            if del_resp.status_code == 204:
+                return "✅ Reserva eliminada correctamente."
+            return "❌ No se pudo cancelar la reserva."
+
+        return "✅ Reserva cancelada exitosamente."
+
+    except requests.RequestException as e:
+        logger.error(f"Error al cancelar reserva: {e}")
+        return "⚙️ No pude cancelar la reserva en este momento."
+
+
+async def cancelar_reserva_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /cancelar <ID> para cancelar un pedido/reserva."""
+    args = context.args
+    if len(args) != 1 or not args[0].isdigit():
+        await update.message.reply_text("Uso: /cancelar <ID_del_pedido>")
+        return
+
+    order_id = int(args[0])
+    result_text = cancel_order_api(order_id)
+    await update.message.reply_text(result_text, parse_mode=None)
+
+    # Registrar interacción
+    await log_conversation(
+        user=update.effective_user,
+        user_text=update.message.text,
+        bot_text=result_text,
+    )
+
 # --- Función Principal ---
 
 def main():
@@ -546,6 +603,7 @@ def main():
     app.add_handler(CommandHandler("recomendar", recomendar_handler))
     app.add_handler(CommandHandler("reservar", reservar_handler))
     app.add_handler(CommandHandler("reservas", reservas_handler))
+    app.add_handler(CommandHandler("cancelar", cancelar_reserva_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     
     logger.info("Bot configurado y listo. Iniciando polling...")
