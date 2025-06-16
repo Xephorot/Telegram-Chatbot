@@ -91,7 +91,7 @@ async def get_history_from_api(user_id: int) -> str:
         return ""
     try:
         # Pide la última conversación para el contexto más reciente
-        conv_response = requests.get(f"{API_BASE_URL}/api/conversations/?user__telegram_id={user_id}&ordering=-timestamp&limit=1")
+        conv_response = requests.get(f"{API_BASE_URL}/api/conversations/?user__telegram_id={user_id}&ordering=-start_time&limit=1")
         conv_response.raise_for_status()
         conversations = conv_response.json().get('results', [])
         
@@ -159,7 +159,7 @@ async def log_conversation(user: dict, user_text: str, bot_text: str):
     try:
         # Reutilizamos la última conversación del usuario (si existe)
         conv_resp = requests.get(
-            f"{API_BASE_URL}/api/conversations/?user={user_id}&ordering=-timestamp&limit=1"
+            f"{API_BASE_URL}/api/conversations/?user={user_id}&ordering=-start_time&limit=1"
         )
         conv_resp.raise_for_status()
         conv_results = conv_resp.json().get('results', [])
