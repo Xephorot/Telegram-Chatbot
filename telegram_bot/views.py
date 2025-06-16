@@ -35,13 +35,72 @@ class ProductViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(in_stock, many=True)
         return Response(serializer.data)
 
-class UserViewSet(viewsets.ReadOnlyModelViewSet):
+    @action(detail=True, methods=['post'])
+    def reserve(self, request, pk=None):
+        """
+        Creates or updates a pending order for a user, adds a product to it,
+        and adjusts stock. This is intended to be called by the bot.
+        """
+        product = self.get_object()
+        
+        telegram_id = request.data.get('telegram_id')
+        quantity_str = request.data.get('quantity')
+        
+        if not telegram_id or not quantity_str:
+            return Response({"error": "telegram_id and quantity are required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            quantity = int(quantity_str)
+            if quantity <= 0:
+                raise ValueError()
+        except (ValueError, TypeError):
+            return Response({"error": "A valid positive integer quantity is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Use get_or_create for the user
+        user, _ = User.objects.get_or_create(
+            telegram_id=str(telegram_id),
+            defaults={
+                'username': request.data.get('username'),
+                'first_name': request.data.get('first_name'),
+                'last_name': request.data.get('last_name'),
+            }
+        )
+
+        if product.stock < quantity:
+            return Response({"error": "Not enough stock available"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Get or create a pending order for the user
+        order, _ = Order.objects.get_or_create(
+            user=user, 
+            status='pending',
+            defaults={'conversation': Conversation.objects.filter(user=user).last()}
+        )
+        
+        # Create or update the order item
+        OrderItem.objects.update_or_create(
+            order=order, 
+            product=product,
+            defaults={'quantity': quantity, 'price': product.price}
+        )
+        
+        # Update stock - this should be done carefully, ideally in a transaction
+        product.stock -= quantity
+        product.save()
+
+        # Recalculate order total
+        order.calculate_total()
+        
+        serializer = OrderSerializer(order)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    filter_backends = [filters.SearchFilter]
+    filter_backends = [filters.SearchFilter, DjangoFilterBackend]
     search_fields = ['username', 'first_name', 'last_name']
+    filterset_fields = ['telegram_id']
 
-class ConversationViewSet(viewsets.ReadOnlyModelViewSet):
+class ConversationViewSet(viewsets.ModelViewSet):
     queryset = Conversation.objects.all()
     serializer_class = ConversationSerializer
     filter_backends = [DjangoFilterBackend]
@@ -54,7 +113,7 @@ class ConversationViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = MessageSerializer(messages, many=True)
         return Response(serializer.data)
 
-class MessageViewSet(viewsets.ReadOnlyModelViewSet):
+class MessageViewSet(viewsets.ModelViewSet):
     queryset = Message.objects.all()
     serializer_class = MessageSerializer
     filter_backends = [DjangoFilterBackend]

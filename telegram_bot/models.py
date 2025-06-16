@@ -74,14 +74,19 @@ class Order(models.Model):
     )
     
     user = models.ForeignKey(User, related_name='orders', on_delete=models.CASCADE)
-    conversation = models.ForeignKey(Conversation, related_name='orders', on_delete=models.SET_NULL, null=True)
-    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    conversation = models.ForeignKey(Conversation, related_name='orders', on_delete=models.SET_NULL, null=True, blank=True)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
         return f"Order {self.id} by {self.user}"
+
+    def calculate_total(self):
+        """Calculates or recalculates the total amount of the order from its items."""
+        self.total_amount = sum(item.get_item_price() for item in self.items.all())
+        self.save()
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, related_name='items', on_delete=models.CASCADE)
@@ -91,6 +96,10 @@ class OrderItem(models.Model):
     
     def __str__(self):
         return f"{self.quantity} x {self.product.name}"
+
+    def get_item_price(self):
+        """Returns the total price for this line item."""
+        return self.price * self.quantity
 
 class FAQCategory(models.Model):
     name = models.CharField(max_length=100)

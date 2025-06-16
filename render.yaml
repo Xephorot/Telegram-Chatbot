@@ -17,7 +17,7 @@ services:
     
     # Comandos para construir y ejecutar la aplicación.
     buildCommand: "./build.sh" # Render ejecutará este script para instalar dependencias y realizar migraciones.
-    startCommand: "honcho start" # Comando para iniciar el servidor de producción Gunicorn.
+    startCommand: "gunicorn chatbot_project.wsgi:application" # Comando para iniciar el servidor de producción Gunicorn.
 
     # Configuración de las variables de entorno para el servicio web.
     envVars:
