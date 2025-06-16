@@ -42,16 +42,19 @@ def get_products_from_api(limit: int = 50) -> str:
     try:
         response = requests.get(f"{API_BASE_URL}/api/products/?limit={limit}")
         response.raise_for_status()
-        products = response.json().get('results', [])
+        
+        data = response.json()
+        # La API de Django REST Framework con paginación devuelve los datos en la clave 'results'
+        products = data.get('results', [])
         
         if not products:
-            return "No hay productos disponibles actualmente."
+            return "Actualmente no tenemos productos disponibles en el catálogo. ¡Vuelve pronto!"
             
         lines = [f"📦 ID: {p['id']} - {p['name']} - ${p['price']} (Stock: {p['stock']})" for p in products]
         return "\n".join(lines)
     except requests.RequestException as e:
         logger.error(f"Error al contactar la API de productos: {e}")
-        return "Lo siento, no pude obtener la lista de productos en este momento."
+        return "⚙️ Lo siento, no pude conectarme con el sistema de productos en este momento."
 
 async def log_conversation(user: dict, user_text: str, bot_text: str):
     """Guarda la conversación completa (usuario, conversación, mensajes) en la API."""
@@ -121,15 +124,32 @@ async def log_conversation(user: dict, user_text: str, bot_text: str):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /start."""
-    text = (
-        "¡Hola! 👋 Soy tu asistente de compras. Esto es lo que puedo hacer:\n\n"
-        "🤖 **Comandos Disponibles** 🤖\n"
-        "• `/productos` - Muestra la lista de productos.\n"
-        "• `/reservar <ID_del_producto> <cantidad>` - Reserva un artículo.\n"
+    user = update.effective_user
+    welcome_text = (
+        f"¡Hola {user.first_name}! 👋 Soy tu asistente de compras virtual.\n\n"
+        "Puedo ayudarte con lo siguiente:\n"
+        "✅ `/productos` - Ver todos nuestros artículos.\n"
+        "✅ `/reservar <ID> <cantidad>` - Asegura un producto.\n"
         "• `/recomendar` - Te doy una recomendación inteligente.\n\n"
-        "También puedes escribirme lo que necesites y usaré mi IA para ayudarte."
+        "Formatea la respuesta de forma atractiva usando saltos de línea. Sé breve y directo.\n\n"
     )
-    await update.message.reply_text(text)
+    
+    bot_response_text = ""
+    try:
+        response = GEMINI_MODEL.generate_content(welcome_text)
+        bot_response_text = response.text
+        await update.message.reply_text(bot_response_text)
+    except Exception as e:
+        logger.error(f"Error en la API de Gemini (welcome_text): {e}")
+        bot_response_text = "⚙️ Tuve un problema al generar la respuesta de bienvenida. Por favor, intenta de nuevo."
+        await update.message.reply_text(bot_response_text)
+    
+    # Registrar conversación
+    await log_conversation(
+        user=update.effective_user,
+        user_text=update.message.text,
+        bot_text=bot_response_text
+    )
 
 async def productos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /productos."""
@@ -159,7 +179,7 @@ async def recomendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
     except Exception as e:
         logger.error(f"Error en la API de Gemini: {e}")
-        bot_response_text = "Tuve un problema al generar la recomendación. Por favor, intenta de nuevo."
+        bot_response_text = "⚙️ Tuve un problema al generar la recomendación. Por favor, intenta de nuevo."
         await update.message.reply_text(bot_response_text)
     
     # Registrar conversación
@@ -229,29 +249,27 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product_list = get_products_from_api(limit=100)
 
     prompt = (
-        "Eres un chatbot de ventas amigable y muy conciso. Tu objetivo es ayudar al usuario. "
-        "Tus respuestas deben ser cortas y directas (máximo 50 palabras). "
-        "Usa saltos de línea para listar elementos. No uses formato como negritas o cursiva. "
-        "Usa la siguiente lista de productos como contexto. "
-        "Si el usuario quiere reservar, indícale usar el comando `/reservar <ID> <cantidad>`.\n\n"
-        "--- Contexto de Productos ---\n"
+        "Actúa como un asistente de ventas de una tienda, eres amigable, directo y muy conciso. "
+        "Tu respuesta no debe exceder las 50 palabras. No uses ningún formato especial, solo texto y saltos de línea. "
+        "Si el usuario quiere reservar, guíalo para que use el comando `/reservar <ID> <cantidad>`. "
+        "Aquí tienes la lista de productos para tu contexto:\n\n"
+        "--- INICIO CONTEXTO ---\n"
         f"{product_list}\n"
-        "---------------------------\n\n"
-        f"Usuario: \"{user_text}\"\n"
-        "Respuesta concisa:"
+        "--- FIN CONTEXTO ---\n\n"
+        f"Pregunta del usuario: \"{user_text}\"\n"
+        "Tu respuesta breve y útil:"
     )
     
     bot_response_text = ""
     try:
         response = GEMINI_MODEL.generate_content(prompt)
         bot_response_text = response.text
-        # Ya no usamos parse_mode para evitar errores, el prompt pide el formato.
         await context.bot.send_message(
             chat_id=update.effective_chat.id, text=bot_response_text
         )
     except Exception as e:
         logger.error(f"Error en la API de Gemini (texto libre): {e}")
-        bot_response_text = "Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo."
+        bot_response_text = "⚙️ Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo."
         await update.message.reply_text(bot_response_text)
 
     # Registrar conversación
@@ -281,7 +299,8 @@ def main():
     app.add_handler(CommandHandler("reservar", reservar_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     
-    logger.info("Bot configurado. Iniciando polling...")
+    logger.info("Bot configurado y listo. Iniciando polling...")
+    print("-------> BOT INICIADO Y ESCUCHANDO <-------")
     app.run_polling()
     logger.info("El bot se ha detenido.")
 
