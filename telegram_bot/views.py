@@ -177,6 +177,60 @@ class OrderViewSet(viewsets.ModelViewSet):
         
         serializer = OrderItemSerializer(order_item)
         return Response(serializer.data)
+        
+    @action(detail=True, methods=['delete'])
+    def cancel(self, request, pk=None):
+        """Cancela un pedido completo marcándolo como cancelled."""
+        order = self.get_object()
+        logger.info(f"Cancelando pedido {order.id} para usuario {order.user.telegram_id}")
+        
+        # Restaurar el stock de los productos
+        try:
+            for item in order.items.all():
+                product = item.product
+                product.stock += item.quantity
+                product.save()
+                logger.info(f"Stock restaurado para producto {product.id}: +{item.quantity} unidades")
+        except Exception as e:
+            logger.error(f"Error al restaurar stock en cancelación de pedido {order.id}: {e}")
+        
+        # Marcar como cancelado
+        order.status = 'cancelled'
+        order.save()
+        
+        logger.info(f"Pedido {order.id} marcado como cancelado exitosamente")
+        return Response({"status": "cancelled", "message": "Pedido cancelado exitosamente"}, 
+                        status=status.HTTP_200_OK)
+
+class OrderItemViewSet(viewsets.ModelViewSet):
+    queryset = OrderItem.objects.all()
+    serializer_class = OrderItemSerializer
+    
+    def destroy(self, request, *args, **kwargs):
+        """Elimina un item de pedido y actualiza el total del pedido."""
+        item = self.get_object()
+        order = item.order
+        product = item.product
+        quantity = item.quantity
+        
+        logger.info(f"Eliminando item {item.id} del pedido {order.id}")
+        
+        # Restaurar el stock del producto
+        try:
+            product.stock += quantity
+            product.save()
+            logger.info(f"Stock restaurado para producto {product.id}: +{quantity} unidades")
+        except Exception as e:
+            logger.error(f"Error al restaurar stock: {e}")
+        
+        # Eliminar el item
+        item.delete()
+        
+        # Recalcular el total del pedido
+        order.calculate_total()
+        
+        logger.info(f"Item eliminado y pedido recalculado: {order.total_amount}")
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 class FAQCategoryViewSet(viewsets.ModelViewSet):
     queryset = FAQCategory.objects.all()
