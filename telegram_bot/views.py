@@ -191,14 +191,33 @@ class FAQViewSet(viewsets.ModelViewSet):
 
 def chatbot_report_view(request):
     """
-    Una vista pública para mostrar métricas y análisis del chatbot.
-    (Prototipo sin seguridad).
+    Vista de reporte del chatbot.
+
+    Si se recibe el parámetro GET ``telegram_id`` (o ``user_id``), el reporte se filtra
+    únicamente para ese usuario.  De lo contrario, se muestran métricas globales.
     """
-    # 1. Métricas Numéricas
-    total_users = User.objects.count()
-    total_conversations = Conversation.objects.count()
-    total_messages = Message.objects.count()
-    avg_order_value = Order.objects.aggregate(avg_value=Avg('total_amount'))['avg_value'] or 0
+
+    # --- Detección de filtro por usuario ---
+    telegram_param = request.GET.get('telegram_id') or request.GET.get('user_id')
+    user_obj = None
+    if telegram_param:
+        user_obj = User.objects.filter(telegram_id=str(telegram_param)).first()
+
+    if user_obj:
+        # Métricas para un solo usuario
+        total_users = 1
+        total_conversations = Conversation.objects.filter(user=user_obj).count()
+        total_messages = Message.objects.filter(conversation__user=user_obj).count()
+        avg_order_value = (
+            Order.objects.filter(user=user_obj).aggregate(avg_value=Avg('total_amount'))['avg_value']
+            or 0
+        )
+    else:
+        # Métricas globales
+        total_users = User.objects.count()
+        total_conversations = Conversation.objects.count()
+        total_messages = Message.objects.count()
+        avg_order_value = Order.objects.aggregate(avg_value=Avg('total_amount'))['avg_value'] or 0
 
     # 2. Análisis con IA (si la clave está disponible)
     gemini_analysis = {
@@ -212,11 +231,15 @@ def chatbot_report_view(request):
             genai.configure(api_key=gemini_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
-            # Recopilar los últimos 100 mensajes de usuarios para análisis
-            recent_user_messages = Message.objects.filter(sender='user').order_by('-timestamp')[:100]
-            messages_text = "\n".join([f"- \"{msg.content}\"" for msg in recent_user_messages])
+            # Recopilar los últimos 100 mensajes de usuarios para análisis (filtrado por usuario si aplica)
+            msg_queryset = Message.objects.filter(sender='user')
+            if user_obj:
+                msg_queryset = msg_queryset.filter(conversation__user=user_obj)
 
-            if messages_text:
+            recent_user_messages = msg_queryset.order_by('-timestamp')[:100]
+
+            if recent_user_messages:
+                messages_text = "\n".join([f"- \"{msg.content}\"" for msg in recent_user_messages])
                 prompt = (
                     "Eres un analista de datos experto en experiencia de cliente. "
                     "Analiza los siguientes mensajes de usuarios de un chatbot de ventas. "
@@ -235,20 +258,19 @@ def chatbot_report_view(request):
                 
                 analysis_text = response.text
                 
-                # Parsing más robusto para la respuesta del modelo
-                # Se busca cada sección por su título para evitar errores si el formato cambia
-                topics_part = analysis_text.split("Sentimiento General:")[0]
-                sentiment_part = analysis_text.split("Sugerencias de Mejora:")[0]
-                suggestions_part = analysis_text
+                # Normalizamos encabezados quitando numeración ("1.", "2." ...)
+                import re
+                cleaned_text = re.sub(r"\n?\s*\d+\.\s*(Temas Principales|Sentimiento General|Sugerencias de Mejora):", r"\n\1:", analysis_text)
 
-                if "Temas Principales:" in topics_part:
-                    gemini_analysis['main_topics'] = topics_part.replace("1. Temas Principales:", "").strip()
-                
-                if "Sentimiento General:" in sentiment_part:
-                    gemini_analysis['general_sentiment'] = sentiment_part.split("Sentimiento General:")[-1].strip()
-                
-                if "Sugerencias de Mejora:" in suggestions_part:
-                    gemini_analysis['improvement_suggestions'] = suggestions_part.split("Sugerencias de Mejora:")[-1].strip()
+                # Extraemos cada sección de forma robusta
+                def extract_section(label: str, text: str) -> str:
+                    pattern = re.compile(rf"{label}:\s*(.*?)\s*(?:(Temas Principales|Sentimiento General|Sugerencias de Mejora):|$)", re.S)
+                    match = pattern.search(text)
+                    return match.group(1).strip() if match else "N/A"
+
+                gemini_analysis['main_topics'] = extract_section("Temas Principales", cleaned_text)
+                gemini_analysis['general_sentiment'] = extract_section("Sentimiento General", cleaned_text)
+                gemini_analysis['improvement_suggestions'] = extract_section("Sugerencias de Mejora", cleaned_text)
 
             else:
                 gemini_analysis['main_topics'] = "No hay suficientes mensajes de usuarios para analizar."
@@ -263,14 +285,21 @@ def chatbot_report_view(request):
             gemini_analysis['improvement_suggestions'] = "Error"
             logger.error(error_message)
 
+    title = 'Reporte del Chatbot'
+    if user_obj:
+        nice_name = user_obj.username or user_obj.first_name or user_obj.telegram_id
+        title = f"Reporte del Usuario: {nice_name}"
+
     context = { 
-        'title': 'Reporte del Chatbot',
+        'title': title,
         'total_users': total_users,
         'total_conversations': total_conversations,
         'total_messages': total_messages,
         'avg_order_value': avg_order_value,
         'gemini_analysis': gemini_analysis,
         'has_gemini_key': bool(gemini_key),
+        'user_report': bool(user_obj),
+        'report_user': user_obj,
     }
     
     return render(request, 'admin/chatbot_report.html', context)

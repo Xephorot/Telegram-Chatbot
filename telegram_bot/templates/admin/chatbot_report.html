@@ -178,69 +178,142 @@
     
     <!-- Métricas Numéricas -->
     <div class="row mb-4">
-        <div class="col-xl-3 col-md-6 mb-4">
-            <div class="card h-100 py-2 metric-card users">
-                <div class="card-body">
-                    <div class="row no-gutters align-items-center">
-                        <div class="col mr-2">
-                            <div class="metric-title text-primary mb-1">Total de Usuarios</div>
-                            <div class="metric-value">{{ total_users }}</div>
-                        </div>
-                        <div class="col-auto">
-                            <i class="fas fa-users metric-icon text-primary"></i>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="col-xl-3 col-md-6 mb-4">
-            <div class="card h-100 py-2 metric-card conversations">
-                <div class="card-body">
-                    <div class="row no-gutters align-items-center">
-                        <div class="col mr-2">
-                            <div class="metric-title text-success mb-1">Conversaciones</div>
-                            <div class="metric-value">{{ total_conversations }}</div>
-                        </div>
-                        <div class="col-auto">
-                            <i class="fas fa-comments metric-icon text-success"></i>
+        {% if user_report %}
+            <!-- Card: Usuario -->
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card h-100 py-2 metric-card users">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="metric-title text-primary mb-1">Usuario</div>
+                                <div class="metric-value">
+                                    {% if report_user.username %}{{ report_user.username }}{% else %}{{ report_user.telegram_id }}{% endif %}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-user metric-icon text-primary"></i>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
-        
-        <div class="col-xl-3 col-md-6 mb-4">
-            <div class="card h-100 py-2 metric-card messages">
-                <div class="card-body">
-                    <div class="row no-gutters align-items-center">
-                        <div class="col mr-2">
-                            <div class="metric-title text-info mb-1">Mensajes Totales</div>
-                            <div class="metric-value">{{ total_messages }}</div>
-                        </div>
-                        <div class="col-auto">
-                            <i class="fas fa-comment-dots metric-icon text-info"></i>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="col-xl-3 col-md-6 mb-4">
-            <div class="card h-100 py-2 metric-card orders">
-                <div class="card-body">
-                    <div class="row no-gutters align-items-center">
-                        <div class="col mr-2">
-                            <div class="metric-title text-warning mb-1">Ticket Promedio</div>
-                            <div class="metric-value">${{ avg_order_value|floatformat:2 }}</div>
-                        </div>
-                        <div class="col-auto">
-                            <i class="fas fa-dollar-sign metric-icon text-warning"></i>
+
+            <!-- Card: Conversaciones del Usuario -->
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card h-100 py-2 metric-card conversations">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="metric-title text-success mb-1">Conversaciones</div>
+                                <div class="metric-value">{{ total_conversations }}</div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-comments metric-icon text-success"></i>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
+
+            <!-- Card: Mensajes del Usuario -->
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card h-100 py-2 metric-card messages">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="metric-title text-info mb-1">Mensajes</div>
+                                <div class="metric-value">{{ total_messages }}</div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-comment-dots metric-icon text-info"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card: Ticket Promedio del Usuario -->
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card h-100 py-2 metric-card orders">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="metric-title text-warning mb-1">Ticket Promedio</div>
+                                <div class="metric-value">${{ avg_order_value|floatformat:2 }}</div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-dollar-sign metric-icon text-warning"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {% else %}
+            <!-- Vista Global (original) -->
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card h-100 py-2 metric-card users">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="metric-title text-primary mb-1">Total de Usuarios</div>
+                                <div class="metric-value">{{ total_users }}</div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-users metric-icon text-primary"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card h-100 py-2 metric-card conversations">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="metric-title text-success mb-1">Conversaciones</div>
+                                <div class="metric-value">{{ total_conversations }}</div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-comments metric-icon text-success"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card h-100 py-2 metric-card messages">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="metric-title text-info mb-1">Mensajes Totales</div>
+                                <div class="metric-value">{{ total_messages }}</div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-comment-dots metric-icon text-info"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card h-100 py-2 metric-card orders">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="metric-title text-warning mb-1">Ticket Promedio</div>
+                                <div class="metric-value">${{ avg_order_value|floatformat:2 }}</div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-dollar-sign metric-icon text-warning"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {% endif %}
     </div>
 
     <!-- Análisis con IA -->

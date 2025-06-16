@@ -203,7 +203,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Puedo ayudarte con lo siguiente:\n"
         "✅ `/productos` - Ver todos nuestros artículos.\n"
         "✅ `/reservar <ID> <cantidad>` - Asegura un producto.\n"
-        "✅ `/ayuda` - Resuelve tus dudas sobre nosotros.\n\n"
+        "✅ `/ayuda` - Resuelve tus dudas sobre nosotros.\n"
+        "✅ `/reservas` - Ver tus pedidos o reservas actuales.\n\n"
         "También puedes escribirme lo que necesites y usaré mi IA para ayudarte."
     )
     
@@ -391,6 +392,22 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info("Detectada pregunta de seguimiento sobre productos. Añadiendo contexto adicional.")
 
+    # --- Detectar solicitudes de pedidos/reservas ---
+    orders_keywords = [
+        "mis reservas",
+        "mis pedidos",
+        "que reservé",
+        "qué reservé",
+        "que reserve",
+        "mis ordenes",
+        "mis órdenes",
+    ]
+    if any(k in lower_text for k in orders_keywords):
+        orders_text = get_orders_from_api(user.id)
+        await update.message.reply_text(orders_text, parse_mode=None)
+        await log_conversation(user=user, user_text=user_text, bot_text=orders_text)
+        return  # No pasamos a IA
+
     # Prompt Final y Balanceado: Conversacional, conciso y con memoria.
     prompt = (
         "Eres un asistente de compras virtual para TechRetail. Tu personalidad es amigable y eficiente. Tu objetivo es dar respuestas claras, breves y útiles.\n\n"
@@ -456,6 +473,59 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_text=bot_response_text
     )
 
+# --- Nuevo helper para pedidos/reservas ---
+
+def get_orders_from_api(telegram_id: int, limit: int = 10) -> str:
+    """Devuelve un resumen de los pedidos/reservas de un usuario."""
+    if not API_BASE_URL:
+        return "Error: La URL de la API no está configurada."
+
+    try:
+        url = (
+            f"{API_BASE_URL}/api/orders/?user__telegram_id={telegram_id}&ordering=-created_at&limit={limit}"
+        )
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        orders = data.get("results", data)  # soporta paginación y sin paginación
+
+        if not orders:
+            return "No tienes pedidos o reservas en este momento."
+
+        lines = []
+        for o in orders:
+            lines.append(
+                f"🛒 Pedido ID: {o['id']} | Estado: {o['status']} | Total: ${float(o['total_amount']):.2f}"
+            )
+            # Items
+            items = o.get("items", [])
+            for it in items:
+                prod = it.get("product_details", {})
+                name = prod.get("name", "Producto")
+                qty = it.get("quantity", 1)
+                price = float(it.get("price", 0))
+                lines.append(f"   • {qty} x {name} (${price:.2f} c/u)")
+            lines.append("")  # blank line between orders
+        return "\n".join(lines).strip()
+    except requests.RequestException as e:
+        logger.error(f"Error al obtener pedidos del usuario: {e}")
+        return "No pude recuperar tus pedidos en este momento."
+
+# --- Nuevo handler para /reservas o /pedidos ---
+
+async def reservas_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra los pedidos/reservas del usuario."""
+    user = update.effective_user
+    orders_text = get_orders_from_api(user.id)
+    await update.message.reply_text(orders_text, parse_mode=None)
+
+    # Registrar conversación
+    await log_conversation(
+        user=user,
+        user_text=update.message.text,
+        bot_text=orders_text,
+    )
+
 # --- Función Principal ---
 
 def main():
@@ -475,6 +545,7 @@ def main():
     app.add_handler(CommandHandler("ayuda", ayuda_handler))
     app.add_handler(CommandHandler("recomendar", recomendar_handler))
     app.add_handler(CommandHandler("reservar", reservar_handler))
+    app.add_handler(CommandHandler("reservas", reservas_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     
     logger.info("Bot configurado y listo. Iniciando polling...")
