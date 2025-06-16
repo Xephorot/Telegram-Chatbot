@@ -53,6 +53,70 @@ def get_products_from_api(limit: int = 50) -> str:
         logger.error(f"Error al contactar la API de productos: {e}")
         return "Lo siento, no pude obtener la lista de productos en este momento."
 
+async def log_conversation(user: dict, user_text: str, bot_text: str):
+    """Guarda la conversación completa (usuario, conversación, mensajes) en la API."""
+    if not API_BASE_URL:
+        logger.error("No se puede registrar la conversación: API_BASE_URL no está configurada.")
+        return
+
+    # 1. Obtener o crear el usuario
+    user_id = None
+    try:
+        # Primero intenta obtener el usuario por telegram_id
+        response = requests.get(f"{API_BASE_URL}/api/users/?telegram_id={user.id}")
+        response.raise_for_status()
+        results = response.json().get('results', [])
+        
+        if results:
+            user_id = results[0]['id']
+        else:
+            # Si no existe, créalo
+            user_payload = {
+                "telegram_id": str(user.id),
+                "username": user.username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+            }
+            response = requests.post(f"{API_BASE_URL}/api/users/", json=user_payload)
+            response.raise_for_status()
+            user_id = response.json()['id']
+    except requests.RequestException as e:
+        logger.error(f"Error al obtener/crear usuario en la API: {e}")
+        return
+
+    if not user_id:
+        logger.error("No se pudo obtener un user_id para registrar la conversación.")
+        return
+
+    # 2. Crear una nueva entrada de conversación
+    conv_id = None
+    try:
+        conv_payload = {"user": user_id}
+        response = requests.post(f"{API_BASE_URL}/api/conversations/", json=conv_payload)
+        response.raise_for_status()
+        conv_id = response.json()['id']
+    except requests.RequestException as e:
+        logger.error(f"Error al crear la conversación en la API: {e}")
+        return
+
+    if not conv_id:
+        logger.error("No se pudo obtener un conv_id para registrar los mensajes.")
+        return
+
+    # 3. Registrar ambos mensajes
+    try:
+        # Mensaje del usuario
+        msg_user_payload = {"conversation": conv_id, "sender": "user", "content": user_text}
+        requests.post(f"{API_BASE_URL}/api/messages/", json=msg_user_payload).raise_for_status()
+        
+        # Mensaje del bot
+        msg_bot_payload = {"conversation": conv_id, "sender": "bot", "content": bot_text}
+        requests.post(f"{API_BASE_URL}/api/messages/", json=msg_bot_payload).raise_for_status()
+        
+        logger.info(f"Conversación {conv_id} registrada con éxito.")
+    except requests.RequestException as e:
+        logger.error(f"Error al registrar mensajes en la API: {e}")
+
 # --- Handlers de Telegram ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -80,27 +144,30 @@ async def recomendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
     product_list = get_products_from_api(limit=100)
     prompt = (
-        "Eres un asistente de ventas experto. Basado en la siguiente lista de productos, "
-        "recomienda los 3 mejores artículos para un cliente. Explica brevemente por qué cada uno es una buena elección. "
-        "Formatea la respuesta de forma atractiva usando Markdown.\n\n"
+        "Eres un asistente de ventas experto y muy conciso. Basado en la siguiente lista de productos, "
+        "recomienda los 3 mejores artículos para un cliente. "
+        "Usa un salto de línea para separar cada recomendación. No uses negritas, asteriscos ni otro formato especial. Sé breve.\n\n"
         f"Lista de productos:\n{product_list}"
     )
+    
+    bot_response_text = ""
     try:
         response = GEMINI_MODEL.generate_content(prompt)
+        bot_response_text = response.text
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=response.text, parse_mode=ParseMode.MARKDOWN
+            chat_id=update.effective_chat.id, text=bot_response_text
         )
     except Exception as e:
-        if "Can't parse entities" in str(e):
-            logger.warning("Error de parseo de Markdown desde Gemini. Reintentando como texto plano.")
-            try:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=response.text)
-            except Exception as e_plain:
-                logger.error(f"Error al enviar como texto plano: {e_plain}")
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="Tuve un problema al procesar la respuesta.")
-        else:
-            logger.error(f"Error en la API de Gemini: {e}")
-            await update.message.reply_text("Tuve un problema al generar la recomendación. Por favor, intenta de nuevo.")
+        logger.error(f"Error en la API de Gemini: {e}")
+        bot_response_text = "Tuve un problema al generar la recomendación. Por favor, intenta de nuevo."
+        await update.message.reply_text(bot_response_text)
+    
+    # Registrar conversación
+    await log_conversation(
+        user=update.effective_user,
+        user_text=update.message.text,
+        bot_text=bot_response_text
+    )
 
 async def reservar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /reservar."""
@@ -162,34 +229,37 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product_list = get_products_from_api(limit=100)
 
     prompt = (
-        "Eres un chatbot de ventas amigable y servicial. Tu principal objetivo es ayudar al usuario a encontrar y reservar productos. "
-        "Usa la siguiente lista de productos como contexto para responder. "
-        "Si el usuario quiere reservar algo, indícale amablemente que use el comando `/reservar <ID> <cantidad>`. "
-        "Si pregunta por productos, puedes usar la lista para responder directamente. "
-        "Mantén las respuestas claras, concisas y en español.\n\n"
+        "Eres un chatbot de ventas amigable y muy conciso. Tu objetivo es ayudar al usuario. "
+        "Tus respuestas deben ser cortas y directas (máximo 50 palabras). "
+        "Usa saltos de línea para listar elementos. No uses formato como negritas o cursiva. "
+        "Usa la siguiente lista de productos como contexto. "
+        "Si el usuario quiere reservar, indícale usar el comando `/reservar <ID> <cantidad>`.\n\n"
         "--- Contexto de Productos ---\n"
         f"{product_list}\n"
         "---------------------------\n\n"
         f"Usuario: \"{user_text}\"\n"
-        "Respuesta:"
+        "Respuesta concisa:"
     )
     
+    bot_response_text = ""
     try:
         response = GEMINI_MODEL.generate_content(prompt)
+        bot_response_text = response.text
+        # Ya no usamos parse_mode para evitar errores, el prompt pide el formato.
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=response.text, parse_mode=ParseMode.MARKDOWN
+            chat_id=update.effective_chat.id, text=bot_response_text
         )
     except Exception as e:
-        if "Can't parse entities" in str(e):
-            logger.warning("Error de parseo de Markdown desde Gemini. Reintentando como texto plano.")
-            try:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=response.text)
-            except Exception as e_plain:
-                logger.error(f"Error al enviar como texto plano: {e_plain}")
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="Tuve un problema al procesar la respuesta.")
-        else:
-            logger.error(f"Error en la API de Gemini (texto libre): {e}")
-            await update.message.reply_text("Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo.")
+        logger.error(f"Error en la API de Gemini (texto libre): {e}")
+        bot_response_text = "Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo."
+        await update.message.reply_text(bot_response_text)
+
+    # Registrar conversación
+    await log_conversation(
+        user=update.effective_user,
+        user_text=user_text,
+        bot_text=bot_response_text
+    )
 
 # --- Función Principal ---
 
