@@ -437,10 +437,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cancel_keywords = ["cómo cancelo", "como cancelo", "cancelar reserva", "cancelar pedido", "como cancelo una reserva", "cómo cancelo una reserva"]
     if any(k in lower_text for k in cancel_keywords):
         cancel_text = (
-            "Para cancelar un artículo reservado, escribe /cancelar para ver la lista numerada y luego /cancelar <número>.\n\n"
+            "Para cancelar un pedido completo, escribe /cancelar para ver la lista numerada y luego /cancelar <número>.\n\n"
             "Por ejemplo:\n"
-            "1. /cancelar (para ver tus artículos)\n"
-            "2. /cancelar 2 (para eliminar el artículo número 2)"
+            "1. /cancelar (para ver tus pedidos)\n"
+            "2. /cancelar 2 (para cancelar el pedido número 2)"
         )
         await update.message.reply_text(cancel_text, parse_mode=None)
         await log_conversation(user=user, user_text=user_text, bot_text="Instrucciones de cancelación enviadas.")
@@ -521,7 +521,7 @@ def get_orders_from_api(telegram_id: int, limit: int = 10) -> str:
     return text
 
 def _fetch_orders_with_map(telegram_id: int, limit: int = 10) -> Tuple[str, Dict[int, int]]:
-    """Devuelve (texto_resumen, map_index_a_orderItemID)."""
+    """Devuelve (texto_resumen, map_index_a_orderID)."""
     if not API_BASE_URL:
         return "Error: La URL de la API no está configurada.", {}
 
@@ -538,12 +538,15 @@ def _fetch_orders_with_map(telegram_id: int, limit: int = 10) -> Tuple[str, Dict
             return "No tienes pedidos o reservas en este momento.", {}
 
         lines = []
-        index_map: Dict[int, int] = {}
-        global_idx = 1
+        index_map: Dict[int, int] = {}  # Ahora mapea índice -> order_id
+        order_idx = 1
         for o in orders:
+            order_id = o['id']
+            index_map[order_idx] = order_id
             lines.append(
-                f"🛒 Pedido ID: {o['id']} | Estado: {o['status']} | Total: ${float(o['total_amount']):.2f}"
+                f"🛒 [{order_idx}] Pedido ID: {order_id} | Estado: {o['status']} | Total: ${float(o['total_amount']):.2f}"
             )
+            order_idx += 1
             # Items
             items = o.get("items", [])
             for it in items:
@@ -551,9 +554,7 @@ def _fetch_orders_with_map(telegram_id: int, limit: int = 10) -> Tuple[str, Dict
                 name = prod.get("name", "Producto")
                 qty = it.get("quantity", 1)
                 price = float(it.get("price", 0))
-                lines.append(f"   [{global_idx}] {qty} x {name} (${price:.2f} c/u)")
-                index_map[global_idx] = it.get("id")
-                global_idx += 1
+                lines.append(f"   • {qty} x {name} (${price:.2f} c/u)")
             lines.append("")  # blank line between orders
         return "\n".join(lines).strip(), index_map
     except requests.RequestException as e:
@@ -657,36 +658,36 @@ def cancel_order_api(order_id: int) -> str:
         return "⚙️ No pude cancelar la reserva en este momento."
 
 async def cancelar_reserva_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Flujo interactivo para cancelar reservas.
-
-    1) /cancelar  -> muestra lista numerada de items.
-    2) /cancelar <numero> -> elimina el item.
+    """Flujo interactivo para cancelar pedidos completos.
+    
+    1) /cancelar  -> muestra lista numerada de pedidos.
+    2) /cancelar <numero> -> cancela el pedido completo.
     """
     user = update.effective_user
     args = context.args
 
-    # Paso 1: sin número -> enseñar lista
+    # Paso 1: sin número -> mostrar lista de pedidos
     if not args:
         orders_text, index_map = _fetch_orders_with_map(user.id)
         if index_map:
             context.user_data['cancel_map'] = index_map
-            orders_text += "\n\nResponde con /cancelar <número> para eliminar ese artículo."
+            orders_text += "\n\nResponde con /cancelar <número> para cancelar el pedido completo."
         await update.message.reply_text(orders_text, parse_mode=None)
         return
 
-    # Paso 2: con número provisto
+    # Paso 2: con número provisto - cancelar pedido completo
     if len(args) == 1 and args[0].isdigit():
         if 'cancel_map' not in context.user_data:
-            await update.message.reply_text("Primero usa /cancelar sin argumentos para listar tus artículos y obtener sus números.")
+            await update.message.reply_text("Primero usa /cancelar sin argumentos para listar tus pedidos y obtener sus números.")
             return
 
         idx = int(args[0])
-        item_id = context.user_data['cancel_map'].get(idx)
-        if not item_id:
+        order_id = context.user_data['cancel_map'].get(idx)
+        if not order_id:
             await update.message.reply_text("Número inválido. Prueba de nuevo con /cancelar.")
             return
 
-        result_text = delete_order_item_api(item_id)
+        result_text = cancel_order_api(order_id)
         await update.message.reply_text(result_text, parse_mode=None)
 
         # Limpiar cache
@@ -701,7 +702,7 @@ async def cancelar_reserva_handler(update: Update, context: ContextTypes.DEFAULT
         return
 
     # Parámetros incorrectos
-    await update.message.reply_text("Uso: /cancelar <número>")
+    await update.message.reply_text("Uso: /cancelar <número del pedido>")
 
 # --- Función Principal ---
 
