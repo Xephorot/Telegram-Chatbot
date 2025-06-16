@@ -49,13 +49,13 @@ def get_products_from_api(limit: int = 50) -> str:
         products = data.get('results', [])
         
         if not products:
-            return "Actualmente no tenemos productos disponibles en el catálogo. ¡Vuelve pronto!"
+            return "No hay productos en el catálogo en este momento."
             
         lines = [f"📦 ID: {p['id']} - {p['name']} - ${p['price']} (Stock: {p['stock']})" for p in products]
         return "\n".join(lines)
     except requests.RequestException as e:
         logger.error(f"Error al contactar la API de productos: {e}")
-        return "⚙️ Lo siento, no pude conectarme con el sistema de productos en este momento."
+        return "La información de productos no está disponible en este momento."
 
 def get_faqs_from_api(only_questions: bool = False) -> str:
     """
@@ -73,7 +73,7 @@ def get_faqs_from_api(only_questions: bool = False) -> str:
         faqs = data.get('results', [])
         
         if not faqs:
-            return "" # Retorna vacío si no hay FAQs
+            return "La información de preguntas frecuentes no está disponible en este momento."
 
         if only_questions:
             lines = [f"❓ {faq['question']}" for faq in faqs]
@@ -83,7 +83,7 @@ def get_faqs_from_api(only_questions: bool = False) -> str:
         return "\n".join(lines)
     except requests.RequestException as e:
         logger.error(f"Error al contactar la API de FAQs: {e}")
-        return "" # Retorna vacío en caso de error
+        return "La información de preguntas frecuentes no está disponible en este momento."
 
 async def log_conversation(user: dict, user_text: str, bot_text: str):
     """Guarda la conversación completa (usuario, conversación, mensajes) en la API."""
@@ -329,30 +329,27 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     faqs_context = get_faqs_from_api(only_questions=False)
     products_context = get_products_from_api(limit=100)
 
-    # Prompt simplificado y enfocado en la acción
+    # Prompt con una personalidad más natural y conversacional
     prompt = (
-        "Eres un asistente de ventas y soporte de TechRetail. Tu objetivo es ayudar al usuario de forma clara y directa. Basa tus respuestas únicamente en la información que te proporciono.\n\n"
-        "**Cómo debes actuar:**\n\n"
-        "1.  **Si el usuario pide una recomendación, sugerencia o algo similar sobre productos,** analiza el 'Catálogo de Productos' y sugiérele 2 o 3 artículos relevantes con sus IDs.\n\n"
-        "2.  **Si el usuario hace una pregunta general,** busca la respuesta en las 'Preguntas Frecuentes (FAQs)'.\n\n"
-        "3.  **Si no entiendes la pregunta o no encuentras una respuesta clara,** no inventes nada. En su lugar, responde amablemente y guía al usuario hacia los comandos disponibles:\n"
-        "   'No estoy seguro de cómo ayudarte con eso, pero puedo hacer lo siguiente por ti:\n"
-        "   - Escribe `/productos` para ver nuestro catálogo.\n"
-        "   - Escribe `/ayuda` para ver las preguntas frecuentes.'\n\n"
+        "Eres un asistente de compras virtual para TechRetail, una tienda de tecnología y artículos para el hogar. Tu personalidad es amigable, natural y muy servicial. Tu objetivo principal es ayudar a los usuarios a encontrar lo que buscan y a resolver sus dudas de una manera conversacional.\n\n"
+        "**Tu base de conocimiento es la siguiente:**\n"
+        "1. Un 'Catálogo de Productos'.\n"
+        "2. Una lista de 'Preguntas Frecuentes (FAQs)' sobre la empresa.\n\n"
+        "**Cómo debes conversar:**\n"
+        "- **Para recomendaciones:** Si el usuario pide una 'recomendación', 'sugerencia' o tu 'opinión', sé creativo. Analiza el catálogo y sugiérele 1 o 2 productos que creas que le pueden gustar. Justifica brevemente tu elección de forma natural (ej: '¡Claro! Te podría gustar el [producto], es muy popular y tiene excelentes características.').\n"
+        "- **Para preguntas específicas:** Si la pregunta se responde con las FAQs o los detalles de un producto, usa esa información para dar una respuesta directa.\n"
+        "- **Si no sabes la respuesta:** ¡No pasa nada! Sé honesto y proactivo. Responde algo como: 'Vaya, sobre eso no tengo información. Pero si quieres, puedo buscar algo en nuestro catálogo de productos o mostrarte las preguntas frecuentes.'\n"
+        "- **Importante:** Habla siempre en un tono cercano. Evita las listas con guiones y las respuestas robóticas. Haz que la conversación fluya.\n\n"
         "--- **Base de Conocimiento** ---\n"
         "**Preguntas Frecuentes (FAQs):**\n"
         f"{faqs_context}\n\n"
         "**Catálogo de Productos:**\n"
         f"{products_context}\n"
         "--- **Fin Base de Conocimiento** ---\n\n"
-        f"**Pregunta del Usuario:** \"{user_text}\""
+        f"**Usuario:** \"{user_text}\""
     )
     
-    bot_response_text = (
-        "No estoy seguro de cómo ayudarte con eso, pero puedo hacer lo siguiente por ti:\n"
-        "- Escribe `/productos` para ver nuestro catálogo.\n"
-        "- Escribe `/ayuda` para ver las preguntas frecuentes."
-    )
+    bot_response_text = "Tuve un problema para procesar tu solicitud. Por favor, intenta de nuevo."
     try:
         response = GEMINI_MODEL.generate_content(prompt)
         bot_response_text = response.text
