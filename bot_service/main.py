@@ -85,33 +85,6 @@ def get_faqs_from_api(only_questions: bool = False) -> str:
         logger.error(f"Error al contactar la API de FAQs: {e}")
         return "" # Retorna vacío en caso de error
 
-async def get_history_from_api(user_id: int) -> str:
-    """Obtiene el historial de conversación reciente para un usuario desde la API."""
-    if not API_BASE_URL:
-        return ""
-    try:
-        # Pide las últimas 2 conversaciones para tener más contexto
-        conv_response = requests.get(f"{API_BASE_URL}/api/conversations/?user__telegram_id={user_id}&ordering=-timestamp&limit=2")
-        conv_response.raise_for_status()
-        conversations = conv_response.json().get('results', [])
-        
-        history_lines = []
-        for conv in conversations:
-            # Por cada conversación, pide sus últimos 4 mensajes
-            msg_response = requests.get(f"{API_BASE_URL}/api/messages/?conversation={conv['id']}&ordering=-timestamp&limit=4")
-            msg_response.raise_for_status()
-            messages = msg_response.json().get('results', [])
-            
-            # Reordenamos los mensajes de más antiguo a más nuevo para el prompt
-            for msg in reversed(messages):
-                sender = "Usuario" if msg['sender'] == 'user' else "Asistente"
-                history_lines.append(f"{sender}: {msg['content']}")
-        
-        return "\n".join(history_lines)
-    except requests.RequestException as e:
-        logger.error(f"Error al obtener historial desde la API: {e}")
-        return ""
-
 async def log_conversation(user: dict, user_text: str, bot_text: str):
     """Guarda la conversación completa (usuario, conversación, mensajes) en la API."""
     if not API_BASE_URL:
@@ -355,30 +328,31 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Obtener contextos
     faqs_context = get_faqs_from_api(only_questions=False)
     products_context = get_products_from_api(limit=100)
-    history_context = await get_history_from_api(user.id)
 
-    # Prompt final con memoria persistente y reglas ultra-estrictas
+    # Prompt simplificado y enfocado en la acción
     prompt = (
-        "Eres un asistente de ventas y soporte de TechRetail. Tu conocimiento se limita ESTRICTAMENTE a la información que te proporciono. NO inventes respuestas.\n\n"
-        "**Reglas de Comportamiento (Orden de Prioridad Absoluto):**\n\n"
-        "1.  **Analiza el 'Historial de Conversación' para entender el contexto.** Si el usuario hace una pregunta de seguimiento (ej: '¿por qué?' o 'dame más detalles'), tu respuesta DEBE basarse en el intercambio anterior.\n\n"
-        "2.  **SI PIDEN RECOMENDACIONES:** Si el usuario pide 'recomendar', 'sugerir' o similar, TU ÚNICA ACCIÓN es analizar el 'Catálogo de Productos' y sugerir 2-3 artículos. No hagas nada más.\n\n"
-        "3.  **SI ES PREGUNTA GENERAL:** Busca la respuesta en las 'Preguntas Frecuentes (FAQs)'. Si está ahí, úsala.\n\n"
-        "4.  **SI ES SOBRE UN PRODUCTO:** Si la pregunta es sobre un producto (precio, stock) y no está en las FAQs, busca en el 'Catálogo de Productos'.\n\n"
-        "5.  **SI NO ENCUENTRAS RESPUESTA:** Si después de seguir todas las reglas anteriores no puedes dar una respuesta relevante, di únicamente: 'No estoy seguro de cómo ayudarte con eso, por favor intenta reformular tu pregunta.'. NO ofrezcas alternativas ni sugieras nada.\n\n"
-        "--- **Historial de Conversación** ---\n"
-        f"{history_context}\n"
-        "--- **Fin del Historial** ---\n\n"
+        "Eres un asistente de ventas y soporte de TechRetail. Tu objetivo es ayudar al usuario de forma clara y directa. Basa tus respuestas únicamente en la información que te proporciono.\n\n"
+        "**Cómo debes actuar:**\n\n"
+        "1.  **Si el usuario pide una recomendación, sugerencia o algo similar sobre productos,** analiza el 'Catálogo de Productos' y sugiérele 2 o 3 artículos relevantes con sus IDs.\n\n"
+        "2.  **Si el usuario hace una pregunta general,** busca la respuesta en las 'Preguntas Frecuentes (FAQs)'.\n\n"
+        "3.  **Si no entiendes la pregunta o no encuentras una respuesta clara,** no inventes nada. En su lugar, responde amablemente y guía al usuario hacia los comandos disponibles:\n"
+        "   'No estoy seguro de cómo ayudarte con eso, pero puedo hacer lo siguiente por ti:\n"
+        "   - Escribe `/productos` para ver nuestro catálogo.\n"
+        "   - Escribe `/ayuda` para ver las preguntas frecuentes.'\n\n"
         "--- **Base de Conocimiento** ---\n"
         "**Preguntas Frecuentes (FAQs):**\n"
         f"{faqs_context}\n\n"
         "**Catálogo de Productos:**\n"
         f"{products_context}\n"
         "--- **Fin Base de Conocimiento** ---\n\n"
-        f"**Pregunta Actual del Usuario:** \"{user_text}\""
+        f"**Pregunta del Usuario:** \"{user_text}\""
     )
     
-    bot_response_text = "No estoy seguro de cómo ayudarte con eso. Intenta reformular tu pregunta."
+    bot_response_text = (
+        "No estoy seguro de cómo ayudarte con eso, pero puedo hacer lo siguiente por ti:\n"
+        "- Escribe `/productos` para ver nuestro catálogo.\n"
+        "- Escribe `/ayuda` para ver las preguntas frecuentes."
+    )
     try:
         response = GEMINI_MODEL.generate_content(prompt)
         bot_response_text = response.text
@@ -408,7 +382,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_response_text = "⚙️ Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo."
         await update.message.reply_text(bot_response_text)
     
-    # El historial ya no se guarda localmente, solo se registra en la API
     await log_conversation(
         user=update.effective_user,
         user_text=user_text,

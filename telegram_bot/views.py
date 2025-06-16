@@ -191,17 +191,9 @@ class FAQViewSet(viewsets.ModelViewSet):
 
 def chatbot_report_view(request):
     """
-    Una vista personalizada para mostrar métricas y análisis del chatbot.
-    Ahora es independiente del admin y se protege con un token.
+    Una vista pública para mostrar métricas y análisis del chatbot.
+    (Prototipo sin seguridad).
     """
-    # --- Seguridad por Token ---
-    report_token = os.environ.get("REPORT_ACCESS_TOKEN")
-    auth_token = request.headers.get("X-Report-Token")
-
-    if not report_token or auth_token != report_token:
-        logger.warning(f"Intento de acceso no autorizado al informe. IP: {request.META.get('REMOTE_ADDR')}")
-        return HttpResponseForbidden("Acceso denegado. Token inválido.")
-
     # 1. Métricas Numéricas
     total_users = User.objects.count()
     total_conversations = Conversation.objects.count()
