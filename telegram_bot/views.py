@@ -214,10 +214,10 @@ def chatbot_report_view(request):
         )
     else:
         # Métricas globales
-    total_users = User.objects.count()
-    total_conversations = Conversation.objects.count()
-    total_messages = Message.objects.count()
-    avg_order_value = Order.objects.aggregate(avg_value=Avg('total_amount'))['avg_value'] or 0
+        total_users = User.objects.count()
+        total_conversations = Conversation.objects.count()
+        total_messages = Message.objects.count()
+        avg_order_value = Order.objects.aggregate(avg_value=Avg('total_amount'))['avg_value'] or 0
 
     # 2. Análisis con IA (si la clave está disponible)
     gemini_analysis = {
@@ -239,7 +239,7 @@ def chatbot_report_view(request):
             recent_user_messages = msg_queryset.order_by('-timestamp')[:100]
 
             if recent_user_messages:
-            messages_text = "\n".join([f"- \"{msg.content}\"" for msg in recent_user_messages])
+                messages_text = "\n".join([f"- \"{msg.content}\"" for msg in recent_user_messages])
                 prompt = (
                     "Eres un analista de datos experto en experiencia de cliente. "
                     "Analiza los siguientes mensajes de usuarios de un chatbot de ventas. "
