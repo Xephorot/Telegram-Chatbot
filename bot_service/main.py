@@ -85,6 +85,33 @@ def get_faqs_from_api(only_questions: bool = False) -> str:
         logger.error(f"Error al contactar la API de FAQs: {e}")
         return "" # Retorna vacío en caso de error
 
+async def get_history_from_api(user_id: int) -> str:
+    """Obtiene el historial de conversación reciente para un usuario desde la API."""
+    if not API_BASE_URL:
+        return ""
+    try:
+        # Pide las últimas 2 conversaciones para tener más contexto
+        conv_response = requests.get(f"{API_BASE_URL}/api/conversations/?user__telegram_id={user_id}&ordering=-timestamp&limit=2")
+        conv_response.raise_for_status()
+        conversations = conv_response.json().get('results', [])
+        
+        history_lines = []
+        for conv in conversations:
+            # Por cada conversación, pide sus últimos 4 mensajes
+            msg_response = requests.get(f"{API_BASE_URL}/api/messages/?conversation={conv['id']}&ordering=-timestamp&limit=4")
+            msg_response.raise_for_status()
+            messages = msg_response.json().get('results', [])
+            
+            # Reordenamos los mensajes de más antiguo a más nuevo para el prompt
+            for msg in reversed(messages):
+                sender = "Usuario" if msg['sender'] == 'user' else "Asistente"
+                history_lines.append(f"{sender}: {msg['content']}")
+        
+        return "\n".join(history_lines)
+    except requests.RequestException as e:
+        logger.error(f"Error al obtener historial desde la API: {e}")
+        return ""
+
 async def log_conversation(user: dict, user_text: str, bot_text: str):
     """Guarda la conversación completa (usuario, conversación, mensajes) en la API."""
     if not API_BASE_URL:
@@ -322,28 +349,25 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     
     user_text = update.message.text
-    logger.info(f"Usuario '{update.effective_user.username}' envió un mensaje de texto para procesar con IA.")
-
-    # Recuperar el historial o empezar uno nuevo
-    history = context.user_data.get('history', [])
+    user = update.effective_user
+    logger.info(f"Usuario '{user.username}' envió un mensaje de texto para procesar con IA.")
 
     # Obtener contextos
     faqs_context = get_faqs_from_api(only_questions=False)
     products_context = get_products_from_api(limit=100)
+    history_context = await get_history_from_api(user.id)
 
-    # Convertir el historial a un formato de texto para el prompt
-    history_text = "\n".join([f"Usuario: {turn['user']}\nAsistente: {turn['bot']}" for turn in history])
-
-    # Prompt mejorado que incluye el historial de la conversación
+    # Prompt final con memoria persistente y reglas ultra-estrictas
     prompt = (
-        "Eres un asistente de ventas y soporte de TechRetail. Tu conocimiento se limita ESTRICTAMENTE a la información que te proporciono. NO inventes nada.\n\n"
-        "**Reglas de Comportamiento (Orden de Prioridad):**\n\n"
-        "1.  **SI TE PIDEN RECOMENDACIONES:** Si el usuario pide una 'recomendación', 'sugerencia' o algo similar sobre productos, TU ÚNICA ACCIÓN es analizar el 'Catálogo de Productos' y sugerirle 2 o 3 artículos. No menciones las FAQs. No digas que no sabes.\n\n"
-        "2.  **SI ES UNA PREGUNTA GENERAL:** Busca la respuesta en las 'Preguntas Frecuentes (FAQs)'. Si está ahí, úsala.\n\n"
-        "3.  **SI ES SOBRE UN PRODUCTO:** Si la pregunta es sobre un producto específico (precio, stock, etc.) y no está en las FAQs, busca en el 'Catálogo de Productos'.\n\n"
-        "4.  **SI NO ENCUENTRAS RESPUESTA:** Si después de seguir los pasos anteriores no encuentras una respuesta, responde de forma amable y simple: 'Lo siento, no tengo información sobre eso. Puedo ayudarte con preguntas sobre nuestros productos o el proceso de compra.' NO sugieras una lista de FAQs.\n\n"
-        "--- **Historial de Conversación Reciente** ---\n"
-        f"{history_text}\n"
+        "Eres un asistente de ventas y soporte de TechRetail. Tu conocimiento se limita ESTRICTAMENTE a la información que te proporciono. NO inventes respuestas.\n\n"
+        "**Reglas de Comportamiento (Orden de Prioridad Absoluto):**\n\n"
+        "1.  **Analiza el 'Historial de Conversación' para entender el contexto.** Si el usuario hace una pregunta de seguimiento (ej: '¿por qué?' o 'dame más detalles'), tu respuesta DEBE basarse en el intercambio anterior.\n\n"
+        "2.  **SI PIDEN RECOMENDACIONES:** Si el usuario pide 'recomendar', 'sugerir' o similar, TU ÚNICA ACCIÓN es analizar el 'Catálogo de Productos' y sugerir 2-3 artículos. No hagas nada más.\n\n"
+        "3.  **SI ES PREGUNTA GENERAL:** Busca la respuesta en las 'Preguntas Frecuentes (FAQs)'. Si está ahí, úsala.\n\n"
+        "4.  **SI ES SOBRE UN PRODUCTO:** Si la pregunta es sobre un producto (precio, stock) y no está en las FAQs, busca en el 'Catálogo de Productos'.\n\n"
+        "5.  **SI NO ENCUENTRAS RESPUESTA:** Si después de seguir todas las reglas anteriores no puedes dar una respuesta relevante, di únicamente: 'No estoy seguro de cómo ayudarte con eso, por favor intenta reformular tu pregunta.'. NO ofrezcas alternativas ni sugieras nada.\n\n"
+        "--- **Historial de Conversación** ---\n"
+        f"{history_context}\n"
         "--- **Fin del Historial** ---\n\n"
         "--- **Base de Conocimiento** ---\n"
         "**Preguntas Frecuentes (FAQs):**\n"
@@ -383,13 +407,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error en la API de Gemini o al enviar mensaje (texto libre): {e}")
         bot_response_text = "⚙️ Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo."
         await update.message.reply_text(bot_response_text)
-
-    # Actualizar el historial de conversación con el último intercambio
-    history.append({'user': user_text, 'bot': bot_response_text})
-    # Mantener el historial con un máximo de las últimas 3 interacciones
-    context.user_data['history'] = history[-3:]
     
-    # Registrar conversación en la API (opcional, ya que tenemos el historial local)
+    # El historial ya no se guarda localmente, solo se registra en la API
     await log_conversation(
         user=update.effective_user,
         user_text=user_text,

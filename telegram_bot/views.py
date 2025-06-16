@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Count, Avg
 from django.contrib.admin.views.decorators import staff_member_required
+from django.http import HttpResponseForbidden
 import os
 import google.generativeai as genai
 import logging
@@ -188,11 +189,19 @@ class FAQViewSet(viewsets.ModelViewSet):
     filterset_fields = ['category']
     search_fields = ['question', 'answer']
 
-@staff_member_required
 def chatbot_report_view(request):
     """
-    Una vista personalizada en el admin para mostrar métricas y análisis del chatbot.
+    Una vista personalizada para mostrar métricas y análisis del chatbot.
+    Ahora es independiente del admin y se protege con un token.
     """
+    # --- Seguridad por Token ---
+    report_token = os.environ.get("REPORT_ACCESS_TOKEN")
+    auth_token = request.headers.get("X-Report-Token")
+
+    if not report_token or auth_token != report_token:
+        logger.warning(f"Intento de acceso no autorizado al informe. IP: {request.META.get('REMOTE_ADDR')}")
+        return HttpResponseForbidden("Acceso denegado. Token inválido.")
+
     # 1. Métricas Numéricas
     total_users = User.objects.count()
     total_conversations = Conversation.objects.count()
