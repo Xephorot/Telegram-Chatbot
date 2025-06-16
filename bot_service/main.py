@@ -28,7 +28,7 @@ API_BASE_URL = os.environ.get("API_BASE_URL")  # La URL de tu API en Render
 # --- Configuración de APIs ---
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    GEMINI_MODEL = genai.GenerativeModel("gemini-pro")
+    GEMINI_MODEL = genai.GenerativeModel("gemini-1.5-flash")
 else:
     GEMINI_MODEL = None
     logger.warning("GEMINI_API_KEY no encontrada. Las funciones de IA estarán deshabilitadas.")
