@@ -154,6 +154,11 @@ async def log_conversation(user: dict, user_text: str, bot_text: str):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /start."""
     user = update.effective_user
+    
+    # Limpia el historial de conversación anterior para este usuario
+    if 'history' in context.user_data:
+        del context.user_data['history']
+        
     welcome_text = (
         f"¡Hola {user.first_name}! 👋 Soy tu asistente de compras virtual.\n\n"
         "Puedo ayudarte con lo siguiente:\n"
@@ -319,11 +324,17 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     logger.info(f"Usuario '{update.effective_user.username}' envió un mensaje de texto para procesar con IA.")
 
+    # Recuperar el historial o empezar uno nuevo
+    history = context.user_data.get('history', [])
+
     # Obtener contextos
     faqs_context = get_faqs_from_api(only_questions=False)
     products_context = get_products_from_api(limit=100)
 
-    # Prompt mejorado y más específico con reglas estrictas
+    # Convertir el historial a un formato de texto para el prompt
+    history_text = "\n".join([f"Usuario: {turn['user']}\nAsistente: {turn['bot']}" for turn in history])
+
+    # Prompt mejorado que incluye el historial de la conversación
     prompt = (
         "Eres un asistente de ventas y soporte de TechRetail. Tu conocimiento se limita ESTRICTAMENTE a la información que te proporciono. NO inventes nada.\n\n"
         "**Reglas de Comportamiento (Orden de Prioridad):**\n\n"
@@ -331,13 +342,16 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2.  **SI ES UNA PREGUNTA GENERAL:** Busca la respuesta en las 'Preguntas Frecuentes (FAQs)'. Si está ahí, úsala.\n\n"
         "3.  **SI ES SOBRE UN PRODUCTO:** Si la pregunta es sobre un producto específico (precio, stock, etc.) y no está en las FAQs, busca en el 'Catálogo de Productos'.\n\n"
         "4.  **SI NO ENCUENTRAS RESPUESTA:** Si después de seguir los pasos anteriores no encuentras una respuesta, responde de forma amable y simple: 'Lo siento, no tengo información sobre eso. Puedo ayudarte con preguntas sobre nuestros productos o el proceso de compra.' NO sugieras una lista de FAQs.\n\n"
+        "--- **Historial de Conversación Reciente** ---\n"
+        f"{history_text}\n"
+        "--- **Fin del Historial** ---\n\n"
         "--- **Base de Conocimiento** ---\n"
         "**Preguntas Frecuentes (FAQs):**\n"
         f"{faqs_context}\n\n"
         "**Catálogo de Productos:**\n"
         f"{products_context}\n"
         "--- **Fin Base de Conocimiento** ---\n\n"
-        f"**Pregunta del Usuario:** \"{user_text}\""
+        f"**Pregunta Actual del Usuario:** \"{user_text}\""
     )
     
     bot_response_text = "No estoy seguro de cómo ayudarte con eso. Intenta reformular tu pregunta."
@@ -370,7 +384,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_response_text = "⚙️ Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo."
         await update.message.reply_text(bot_response_text)
 
-    # Registrar conversación
+    # Actualizar el historial de conversación con el último intercambio
+    history.append({'user': user_text, 'bot': bot_response_text})
+    # Mantener el historial con un máximo de las últimas 3 interacciones
+    context.user_data['history'] = history[-3:]
+    
+    # Registrar conversación en la API (opcional, ya que tenemos el historial local)
     await log_conversation(
         user=update.effective_user,
         user_text=user_text,
