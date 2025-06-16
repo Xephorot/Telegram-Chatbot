@@ -1,0 +1,116 @@
+{% extends "admin/base_site.html" %}
+{% block title %} {{ title }} | Administración de Django {% endblock %}
+
+{% block branding %}
+<h1 id="site-name"><a href="{% url 'admin:index' %}">Administración de Chatbot</a></h1>
+{% endblock %}
+
+{% block content %}
+<style>
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    .metric-card {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+    }
+    .metric-card h3 {
+        margin-top: 0;
+        font-size: 1.2em;
+        color: #495057;
+    }
+    .metric-card p {
+        font-size: 2.5em;
+        margin: 0;
+        font-weight: bold;
+        color: #212529;
+    }
+    .analysis-section {
+        background-color: #fff;
+        border: 1px solid #dee2e6;
+        padding: 20px;
+        border-radius: 8px;
+    }
+    .analysis-section h2 {
+        margin-top: 0;
+        border-bottom: 2px solid #007bff;
+        padding-bottom: 10px;
+        color: #007bff;
+    }
+    .analysis-block {
+        margin-bottom: 20px;
+    }
+    .analysis-block h4 {
+        color: #343a40;
+        font-weight: bold;
+    }
+    .analysis-block p {
+        white-space: pre-wrap; /* Para respetar los saltos de línea */
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+    }
+    .no-key-warning {
+        background-color: #fff3cd;
+        border: 1px solid #ffeeba;
+        color: #856404;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+</style>
+
+<div id="content-main">
+    <h1>📊 {{ title }}</h1>
+    
+    <!-- Métricas Numéricas -->
+    <div class="metric-grid">
+        <div class="metric-card">
+            <h3>Total de Usuarios</h3>
+            <p>{{ total_users }}</p>
+        </div>
+        <div class="metric-card">
+            <h3>Conversaciones</h3>
+            <p>{{ total_conversations }}</p>
+        </div>
+        <div class="metric-card">
+            <h3>Mensajes Totales</h3>
+            <p>{{ total_messages }}</p>
+        </div>
+        <div class="metric-card">
+            <h3>Ticket Promedio (Pedidos)</h3>
+            <p>${{ avg_order_value|floatformat:2 }}</p>
+        </div>
+    </div>
+
+    <!-- Análisis con IA -->
+    <div class="analysis-section">
+        <h2>🤖 Análisis con IA (últimos 100 mensajes)</h2>
+        
+        {% if not has_gemini_key %}
+        <div class="no-key-warning">
+            <strong>Advertencia:</strong> La variable de entorno <code>GEMINI_API_KEY</code> no está configurada en el entorno de Render. El análisis de IA está deshabilitado.
+        </div>
+        {% endif %}
+
+        <div class="analysis-block">
+            <h4>Temas Principales</h4>
+            <p>{{ gemini_analysis.main_topics }}</p>
+        </div>
+        <div class="analysis-block">
+            <h4>Sentimiento General</h4>
+            <p>{{ gemini_analysis.general_sentiment }}</p>
+        </div>
+        <div class="analysis-block">
+            <h4>Sugerencias de Mejora</h4>
+            <p>{{ gemini_analysis.improvement_suggestions }}</p>
+        </div>
+    </div>
+</div>
+{% endblock %} 

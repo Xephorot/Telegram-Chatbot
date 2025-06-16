@@ -56,6 +56,26 @@ def get_products_from_api(limit: int = 50) -> str:
         logger.error(f"Error al contactar la API de productos: {e}")
         return "⚙️ Lo siento, no pude conectarme con el sistema de productos en este momento."
 
+def get_faqs_from_api() -> str:
+    """Obtiene la lista de FAQs desde la API de Render."""
+    if not API_BASE_URL:
+        return "Error: La URL de la API no está configurada."
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/faqs/")
+        response.raise_for_status()
+        
+        data = response.json()
+        faqs = data.get('results', [])
+        
+        if not faqs:
+            return "" # Retorna vacío si no hay FAQs para no polucionar el prompt
+            
+        lines = [f"- Pregunta: {faq['question']}\n  Respuesta: {faq['answer']}" for faq in faqs]
+        return "\n".join(lines)
+    except requests.RequestException as e:
+        logger.error(f"Error al contactar la API de FAQs: {e}")
+        return "" # Retorna vacío en caso de error
+
 async def log_conversation(user: dict, user_text: str, bot_text: str):
     """Guarda la conversación completa (usuario, conversación, mensajes) en la API."""
     if not API_BASE_URL:
@@ -130,8 +150,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Puedo ayudarte con lo siguiente:\n"
         "✅ `/productos` - Ver todos nuestros artículos.\n"
         "✅ `/reservar <ID> <cantidad>` - Asegura un producto.\n"
-        "• `/recomendar` - Te doy una recomendación inteligente.\n\n"
-        "Formatea la respuesta de forma atractiva usando saltos de línea. Sé breve y directo.\n\n"
+        "✅ `/ayuda` - Resuelve tus dudas sobre nosotros.\n\n"
+        "También puedes escribirme lo que necesites y usaré mi IA para ayudarte."
     )
     
     bot_response_text = ""
@@ -155,6 +175,46 @@ async def productos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /productos."""
     product_list = get_products_from_api()
     await update.message.reply_text(product_list)
+
+async def ayuda_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja el comando de ayuda, enfocado en FAQs."""
+    user_question = " ".join(context.args)
+    
+    if not user_question:
+        await update.message.reply_text(
+            "Puedes preguntarme lo que quieras sobre la tienda, envíos, pagos, etc.\n\n"
+            "Por ejemplo: `/ayuda ¿hacen envíos a todo el país?`"
+        )
+        return
+
+    faqs_context = get_faqs_from_api()
+    prompt = (
+        "Actúa como un asistente de soporte al cliente. Tu única fuente de verdad es la siguiente lista de Preguntas y Respuestas. "
+        "Si la pregunta del usuario se puede responder con esta información, hazlo. Si no, indica amablemente que no tienes esa información. "
+        "Sé breve y directo.\n\n"
+        "--- INICIO CONTEXTO FAQs ---\n"
+        f"{faqs_context}\n"
+        "--- FIN CONTEXTO FAQs ---\n\n"
+        f"Pregunta del usuario: \"{user_question}\"\n"
+        "Tu respuesta basada únicamente en el contexto:"
+    )
+
+    bot_response_text = ""
+    try:
+        response = GEMINI_MODEL.generate_content(prompt)
+        bot_response_text = response.text
+        await update.message.reply_text(bot_response_text)
+    except Exception as e:
+        logger.error(f"Error en la API de Gemini (ayuda): {e}")
+        bot_response_text = "⚙️ Tuve un problema al procesar tu consulta. Por favor, intenta más tarde."
+        await update.message.reply_text(bot_response_text)
+
+    # Registrar la interacción de ayuda
+    await log_conversation(
+        user=update.effective_user,
+        user_text=f"/ayuda {user_question}",
+        bot_text=bot_response_text
+    )
 
 async def recomendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Usa Gemini para recomendar productos basándose en la lista de la API."""
@@ -240,24 +300,28 @@ async def reservar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No pude conectarme al sistema de pedidos. Inténtalo más tarde.")
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Maneja los mensajes de texto libre usando Gemini."""
+    """Maneja los mensajes de texto libre usando Gemini, priorizando FAQs."""
     if not GEMINI_MODEL:
         await update.message.reply_text("Lo siento, no puedo procesar tu solicitud en este momento.")
         return
         
     user_text = update.message.text
-    product_list = get_products_from_api(limit=100)
+    product_list = get_products_from_api(limit=50)
+    faqs_context = get_faqs_from_api()
 
     prompt = (
-        "Actúa como un asistente de ventas de una tienda, eres amigable, directo y muy conciso. "
-        "Tu respuesta no debe exceder las 50 palabras. No uses ningún formato especial, solo texto y saltos de línea. "
-        "Si el usuario quiere reservar, guíalo para que use el comando `/reservar <ID> <cantidad>`. "
-        "Aquí tienes la lista de productos para tu contexto:\n\n"
-        "--- INICIO CONTEXTO ---\n"
+        "Actúa como un asistente de ventas y soporte al cliente para una tienda. Eres amigable, directo y muy conciso (máx 50 palabras). "
+        "Tu prioridad es responder preguntas usando el contexto de FAQs. Si no encuentras la respuesta ahí, usa el contexto de Productos. "
+        "No uses ningún formato especial, solo texto y saltos de línea. "
+        "Si el usuario quiere reservar, guíalo para que use el comando `/reservar <ID> <cantidad>`.\n\n"
+        "--- INICIO CONTEXTO FAQs ---\n"
+        f"{faqs_context}\n"
+        "--- FIN CONTEXTO FAQs ---\n\n"
+        "--- INICIO CONTEXTO Productos ---\n"
         f"{product_list}\n"
-        "--- FIN CONTEXTO ---\n\n"
+        "--- FIN CONTEXTO Productos ---\n\n"
         f"Pregunta del usuario: \"{user_text}\"\n"
-        "Tu respuesta breve y útil:"
+        "Tu respuesta breve y útil (priorizando FAQs):"
     )
     
     bot_response_text = ""
@@ -295,6 +359,7 @@ def main():
     # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("productos", productos_handler))
+    app.add_handler(CommandHandler("ayuda", ayuda_handler))
     app.add_handler(CommandHandler("recomendar", recomendar_handler))
     app.add_handler(CommandHandler("reservar", reservar_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))

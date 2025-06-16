@@ -4,6 +4,10 @@ from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Count, Avg
+from django.contrib.admin.views.decorators import staff_member_required
+import os
+import google.generativeai as genai
 
 from .models import (
     Category, Product, User, Conversation, Message, 
@@ -180,3 +184,73 @@ class FAQViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['category']
     search_fields = ['question', 'answer']
+
+@staff_member_required
+def chatbot_report_view(request):
+    """
+    Una vista personalizada en el admin para mostrar métricas y análisis del chatbot.
+    """
+    # 1. Métricas Numéricas
+    total_users = User.objects.count()
+    total_conversations = Conversation.objects.count()
+    total_messages = Message.objects.count()
+    avg_order_value = Order.objects.aggregate(avg_value=Avg('total_amount'))['avg_value'] or 0
+
+    # 2. Análisis con IA (si la clave está disponible)
+    gemini_analysis = {
+        'main_topics': 'No disponible. Configura la GEMINI_API_KEY.',
+        'general_sentiment': 'No disponible.',
+        'improvement_suggestions': 'No disponible.'
+    }
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            
+            # Recopilar los últimos 100 mensajes de usuarios para análisis
+            recent_user_messages = Message.objects.filter(sender='user').order_by('-timestamp')[:100]
+            messages_text = "\n".join([f"- \"{msg.content}\"" for msg in recent_user_messages])
+
+            if messages_text:
+                prompt = (
+                    "Eres un analista de datos experto en experiencia de cliente. "
+                    "Analiza los siguientes mensajes de usuarios de un chatbot de ventas. "
+                    "Basado en estos mensajes, proporciona un resumen en 3 secciones:\n\n"
+                    "1.  **Temas Principales:** Identifica y lista los 3-5 temas más recurrentes (ej: 'dudas sobre envíos', 'interés en celulares').\n"
+                    "2.  **Sentimiento General:** Describe el sentimiento predominante (Positivo, Negativo, Neutro) y justifica brevemente.\n"
+                    "3.  **Sugerencias de Mejora:** Basado en los temas y el sentimiento, sugiere 1 o 2 acciones concretas para mejorar el bot o el servicio (ej: 'Añadir una FAQ sobre métodos de pago', 'Mejorar la descripción del producto X').\n\n"
+                    "Sé claro, conciso y profesional. No uses formato Markdown.\n\n"
+                    "--- MENSAJES DE USUARIOS ---\n"
+                    f"{messages_text}\n"
+                    "--- FIN DE MENSAJES ---\n\n"
+                    "Análisis:"
+                )
+                
+                response = model.generate_content(prompt)
+                # Simple parsing as the model is instructed to provide sections.
+                analysis_text = response.text
+                gemini_analysis['main_topics'] = analysis_text.split("2.")[0].replace("1. Temas Principales:", "").strip()
+                gemini_analysis['general_sentiment'] = analysis_text.split("3.")[0].split("2.")[-1].replace("Sentimiento General:", "").strip()
+                gemini_analysis['improvement_suggestions'] = analysis_text.split("3.")[-1].replace("Sugerencias de Mejora:", "").strip()
+            else:
+                gemini_analysis['main_topics'] = "No hay suficientes mensajes de usuarios para analizar."
+
+        except Exception as e:
+            # Manejo de error si la API de Gemini falla
+            error_message = f"Error al contactar la API de Gemini: {e}"
+            gemini_analysis['main_topics'] = error_message
+            logger.error(error_message)
+
+
+    context = {
+        'title': 'Reporte del Chatbot',
+        'total_users': total_users,
+        'total_conversations': total_conversations,
+        'total_messages': total_messages,
+        'avg_order_value': avg_order_value,
+        'gemini_analysis': gemini_analysis,
+        'has_gemini_key': bool(gemini_key),
+    }
+    
+    return render(request, 'admin/chatbot_report.html', context)

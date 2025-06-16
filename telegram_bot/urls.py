@@ -14,4 +14,5 @@ router.register(r'faqs', views.FAQViewSet)
 
 urlpatterns = [
     path('api/', include(router.urls)),
+    path('admin/chatbot_report/', views.chatbot_report_view, name='chatbot_report'),
 ] 
