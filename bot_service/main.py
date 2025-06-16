@@ -5,6 +5,7 @@ import google.generativeai as genai
 
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -322,21 +323,20 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     faqs_context = get_faqs_from_api(only_questions=False)
     products_context = get_products_from_api(limit=100)
 
-    # Prompt mejorado y más específico
+    # Prompt mejorado y más específico con reglas estrictas
     prompt = (
-        "Eres un asistente de ventas y soporte de TechRetail. Tu conocimiento se limita ESTRICTAMENTE a la información que te proporciono a continuación. NO inventes nada.\n\n"
-        "**Tu Base de Conocimiento:**\n\n"
-        "**1. PREGUNTAS FRECUENTES (Máxima Prioridad):**\n"
-        "Usa esto para responder preguntas sobre la empresa, envíos, políticas, etc.\n"
-        f"--- FAQs ---\n{faqs_context}\n---\n\n"
-        "**2. CATÁLOGO DE PRODUCTOS:**\n"
-        "Usa esto para responder preguntas sobre productos, stock, precios y para **dar recomendaciones si te las piden**.\n"
-        f"--- PRODUCTOS ---\n{products_context}\n---\n\n"
-        "**Cómo debes responder (Reglas estrictas):**\n"
-        "- Primero, SIEMPRE busca la respuesta en las FAQs. Si la encuentras, úsala y no busques más.\n"
-        "- Si la respuesta no está en las FAQs, búscala en el Catálogo de Productos.\n"
-        "- Si un usuario te pide una **'recomendación'**, **'sugerencia'** o similar, analiza el Catálogo de Productos y sugiérele 2 o 3 artículos relevantes. No digas que no sabes.\n"
-        "- **SI NO ENCUENTRAS LA RESPUESTA** en ninguna de las dos fuentes, y solo en ese caso, responde amablemente: 'Mmm, no estoy seguro de cómo responder a eso. ¿Quizás alguna de estas preguntas frecuentes te ayude?' y luego lista 3 preguntas de las FAQs que creas que se relacionan con la duda del usuario.\n\n"
+        "Eres un asistente de ventas y soporte de TechRetail. Tu conocimiento se limita ESTRICTAMENTE a la información que te proporciono. NO inventes nada.\n\n"
+        "**Reglas de Comportamiento (Orden de Prioridad):**\n\n"
+        "1.  **SI TE PIDEN RECOMENDACIONES:** Si el usuario pide una 'recomendación', 'sugerencia' o algo similar sobre productos, TU ÚNICA ACCIÓN es analizar el 'Catálogo de Productos' y sugerirle 2 o 3 artículos. No menciones las FAQs. No digas que no sabes.\n\n"
+        "2.  **SI ES UNA PREGUNTA GENERAL:** Busca la respuesta en las 'Preguntas Frecuentes (FAQs)'. Si está ahí, úsala.\n\n"
+        "3.  **SI ES SOBRE UN PRODUCTO:** Si la pregunta es sobre un producto específico (precio, stock, etc.) y no está en las FAQs, busca en el 'Catálogo de Productos'.\n\n"
+        "4.  **SI NO ENCUENTRAS RESPUESTA:** Si después de seguir los pasos anteriores no encuentras una respuesta, responde de forma amable y simple: 'Lo siento, no tengo información sobre eso. Puedo ayudarte con preguntas sobre nuestros productos o el proceso de compra.' NO sugieras una lista de FAQs.\n\n"
+        "--- **Base de Conocimiento** ---\n"
+        "**Preguntas Frecuentes (FAQs):**\n"
+        f"{faqs_context}\n\n"
+        "**Catálogo de Productos:**\n"
+        f"{products_context}\n"
+        "--- **Fin Base de Conocimiento** ---\n\n"
         f"**Pregunta del Usuario:** \"{user_text}\""
     )
     
@@ -344,11 +344,29 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = GEMINI_MODEL.generate_content(prompt)
         bot_response_text = response.text
+        # Intenta enviar con el formato por defecto (Markdown)
         await context.bot.send_message(
             chat_id=update.effective_chat.id, text=bot_response_text
         )
+    except BadRequest as e:
+        if "Can't parse entities" in str(e):
+            # El formato de Markdown de Gemini es inválido para Telegram.
+            logger.warning(f"Error de formato Markdown de Gemini. Reenviando como texto plano. Error: {e}")
+            # Reintentar enviar como texto plano
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, text=bot_response_text, parse_mode=None
+            )
+        else:
+            # Otro tipo de BadRequest que no es por formato
+            logger.error(f"Error de Telegram (BadRequest) no relacionado con formato: {e}")
+            bot_response_text_fallback = "⚙️ Tuve un problema al enviar la respuesta. Por favor, intenta de nuevo."
+            await update.message.reply_text(bot_response_text_fallback)
+            # Actualizamos el texto del bot al de fallback para el log
+            bot_response_text = bot_response_text_fallback
+
     except Exception as e:
-        logger.error(f"Error en la API de Gemini (texto libre): {e}")
+        # Captura cualquier otro error (ej. de la API de Gemini)
+        logger.error(f"Error en la API de Gemini o al enviar mensaje (texto libre): {e}")
         bot_response_text = "⚙️ Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo."
         await update.message.reply_text(bot_response_text)
 
