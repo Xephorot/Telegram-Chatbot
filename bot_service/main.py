@@ -91,58 +91,28 @@ async def get_history_from_api(user_id: int) -> str:
         return ""
     try:
         # Pide la última conversación para el contexto más reciente
-        conv_response = requests.get(f"{API_BASE_URL}/api/conversations/?user__telegram_id={user_id}&ordering=-timestamp&limit=3")
+        conv_response = requests.get(f"{API_BASE_URL}/api/conversations/?user__telegram_id={user_id}&ordering=-timestamp&limit=1")
         conv_response.raise_for_status()
         conversations = conv_response.json().get('results', [])
         
         if not conversations:
             return "No hay historial previo."
 
+        # Pide los últimos 6 mensajes de esa conversación, pero ORDENADOS CRONOLÓGICAMENTE
+        # Esto es crucial para que el contexto tenga sentido
+        conv_id = conversations[0]['id']
+        # Nota: cambiamos el ordering a 'timestamp' (sin el -) para obtener del más antiguo al más reciente
+        msg_response = requests.get(f"{API_BASE_URL}/api/messages/?conversation={conv_id}&ordering=timestamp&limit=6")
+        msg_response.raise_for_status()
+        messages = msg_response.json().get('results', [])
+        
+        # Como ya están ordenados cronológicamente, no necesitamos revertirlos
         history_lines = []
-        
-        # Iteramos por las últimas 3 conversaciones (de más reciente a más antigua)
-        for conv in conversations:
-            conv_id = conv['id']
-            # Solicitamos los últimos 8 mensajes por conversación (en lugar de 6)
-            msg_response = requests.get(f"{API_BASE_URL}/api/messages/?conversation={conv_id}&ordering=timestamp&limit=8")
-            msg_response.raise_for_status()
-            messages = msg_response.json().get('results', [])
-            
-            # Añadimos los mensajes al historial
-            for msg in messages:
-                sender = "Usuario" if msg['sender'] == 'user' else "Asistente"
-                content = msg['content'].strip()
-                history_lines.append(f"{sender}: {content}")
-            
-            # Separador entre conversaciones si hay más de una
-            if len(conversations) > 1 and conv != conversations[-1]:
-                history_lines.append("---")
-        
-        # Obtenemos información adicional sobre el usuario
-        try:
-            user_response = requests.get(f"{API_BASE_URL}/api/users/?telegram_id={user_id}")
-            user_response.raise_for_status()
-            users = user_response.json().get('results', [])
-            
-            if users:
-                user = users[0]
-                # Añadimos preferencias y estadísticas del usuario si existen
-                if 'preferences' in user and user['preferences']:
-                    history_lines.insert(0, f"Preferencias del usuario: {user['preferences']}")
-                
-                # Información sobre compras previas
-                order_response = requests.get(f"{API_BASE_URL}/api/orders/?user={user['id']}&limit=3")
-                order_response.raise_for_status()
-                orders = order_response.json().get('results', [])
-                
-                if orders:
-                    history_lines.insert(0, "Compras recientes:")
-                    for order in orders:
-                        product_id = order.get('product_id')
-                        quantity = order.get('quantity', 1)
-                        history_lines.insert(1, f"- Producto ID: {product_id}, Cantidad: {quantity}")
-        except Exception as e:
-            logger.warning(f"No se pudo obtener información adicional del usuario: {e}")
+        for msg in messages:
+            sender = "Usuario" if msg['sender'] == 'user' else "Asistente"
+            # Limpiamos el texto para evitar problemas con markdown o caracteres especiales
+            content = msg['content'].strip()
+            history_lines.append(f"{sender}: {content}")
         
         return "\n".join(history_lines)
     except requests.RequestException as e:
@@ -184,19 +154,24 @@ async def log_conversation(user: dict, user_text: str, bot_text: str):
         logger.error("No se pudo obtener un user_id para registrar la conversación.")
         return
 
-    # 2. Crear una nueva entrada de conversación
+    # 2. Obtener la conversación más reciente o crear una nueva si no existe
     conv_id = None
     try:
-        conv_payload = {"user": user_id}
-        response = requests.post(f"{API_BASE_URL}/api/conversations/", json=conv_payload)
-        response.raise_for_status()
-        conv_id = response.json()['id']
+        # Reutilizamos la última conversación del usuario (si existe)
+        conv_resp = requests.get(
+            f"{API_BASE_URL}/api/conversations/?user={user_id}&ordering=-timestamp&limit=1"
+        )
+        conv_resp.raise_for_status()
+        conv_results = conv_resp.json().get('results', [])
+        if conv_results:
+            conv_id = conv_results[0]['id']
+        else:
+            conv_payload = {"user": user_id}
+            response = requests.post(f"{API_BASE_URL}/api/conversations/", json=conv_payload)
+            response.raise_for_status()
+            conv_id = response.json()['id']
     except requests.RequestException as e:
-        logger.error(f"Error al crear la conversación en la API: {e}")
-        return
-
-    if not conv_id:
-        logger.error("No se pudo obtener un conv_id para registrar los mensajes.")
+        logger.error(f"Error al obtener/crear la conversación en la API: {e}")
         return
 
     # 3. Registrar ambos mensajes
@@ -212,161 +187,6 @@ async def log_conversation(user: dict, user_text: str, bot_text: str):
         logger.info(f"Conversación {conv_id} registrada con éxito.")
     except requests.RequestException as e:
         logger.error(f"Error al registrar mensajes en la API: {e}")
-
-# --- Funciones adicionales para mejorar el contexto ---
-
-def extract_preferences(text: str) -> dict:
-    """
-    Extrae posibles preferencias del usuario basadas en el texto de su mensaje.
-    """
-    preferences = {}
-    
-    # Palabras clave para detectar preferencias de categorías
-    category_keywords = {
-        'smartphone': 'smartphones', 
-        'celular': 'smartphones',
-        'móvil': 'smartphones',
-        'teléfono': 'smartphones',
-        'iphone': 'smartphones',
-        'android': 'smartphones',
-        'samsung': 'smartphones',
-        'laptop': 'laptops',
-        'computadora': 'laptops',
-        'portatil': 'laptops',
-        'notebook': 'laptops',
-        'auriculares': 'audio',
-        'audífonos': 'audio',
-        'speaker': 'audio',
-        'parlante': 'audio',
-        'consola': 'videojuegos',
-        'videojuego': 'videojuegos',
-        'xbox': 'videojuegos',
-        'playstation': 'videojuegos',
-        'ps5': 'videojuegos',
-        'nintendo': 'videojuegos',
-        'cargador': 'accesorios',
-        'funda': 'accesorios',
-        'cable': 'accesorios'
-    }
-    
-    # Palabras clave para detectar preferencias de características
-    feature_keywords = {
-        'barato': 'precio_bajo',
-        'económico': 'precio_bajo',
-        'oferta': 'precio_bajo',
-        'ganga': 'precio_bajo',
-        'descuento': 'precio_bajo',
-        'calidad': 'alta_calidad',
-        'premium': 'alta_calidad',
-        'mejor': 'alta_calidad',
-        'tope de gama': 'alta_calidad',
-        'gama alta': 'alta_calidad',
-        'gaming': 'gaming',
-        'juegos': 'gaming',
-        'videojuegos': 'gaming',
-        'trabajo': 'productividad',
-        'oficina': 'productividad',
-        'profesional': 'productividad',
-        'estudiante': 'productividad'
-    }
-    
-    text_lower = text.lower()
-    
-    # Detectar categorías de interés
-    for keyword, category in category_keywords.items():
-        if keyword in text_lower:
-            preferences['categoria_preferida'] = category
-            break
-    
-    # Detectar características de interés
-    for keyword, feature in feature_keywords.items():
-        if keyword in text_lower:
-            preferences['caracteristica_preferida'] = feature
-            break
-    
-    return preferences
-
-async def update_user_preferences(user_id: int, new_preferences: dict):
-    """Actualiza las preferencias del usuario en la API."""
-    if not API_BASE_URL or not new_preferences:
-        return
-        
-    try:
-        # Primero obtenemos el usuario
-        response = requests.get(f"{API_BASE_URL}/api/users/?telegram_id={user_id}")
-        response.raise_for_status()
-        results = response.json().get('results', [])
-        
-        if not results:
-            logger.warning(f"No se encontró usuario con telegram_id {user_id} para actualizar preferencias")
-            return
-            
-        user = results[0]
-        user_api_id = user['id']
-        
-        # Obtenemos las preferencias actuales y las actualizamos
-        current_preferences = user.get('preferences', {})
-        if not current_preferences:
-            current_preferences = {}
-        
-        # Si las preferencias son un string, intentamos convertirlas a diccionario
-        if isinstance(current_preferences, str):
-            try:
-                import json
-                current_preferences = json.loads(current_preferences)
-            except:
-                current_preferences = {}
-        
-        # Actualizamos con las nuevas preferencias
-        current_preferences.update(new_preferences)
-        
-        # Enviamos la actualización
-        payload = {"preferences": current_preferences}
-        response = requests.patch(f"{API_BASE_URL}/api/users/{user_api_id}/", json=payload)
-        response.raise_for_status()
-        
-        logger.info(f"Preferencias de usuario {user_id} actualizadas con éxito: {new_preferences}")
-    except Exception as e:
-        logger.error(f"Error al actualizar preferencias del usuario: {e}")
-
-async def analyze_sentiment(text: str) -> dict:
-    """
-    Analiza el sentimiento del texto del usuario para mejorar la respuesta del bot.
-    Devuelve un diccionario con información sobre el sentimiento.
-    """
-    sentiment = {"type": "neutral", "score": 0.5}
-    
-    # Palabras positivas en español
-    positive_words = [
-        'gracias', 'excelente', 'bueno', 'genial', 'fantástico', 'increíble', 
-        'perfecto', 'maravilloso', 'encantado', 'satisfecho', 'alegre', 'feliz',
-        'me gusta', 'te agradezco', 'estupendo', 'favorable', 'agradable',
-        '👍', '👏', '😊', '😃', '😄', '🙂', '♥', '❤'
-    ]
-    
-    # Palabras negativas en español
-    negative_words = [
-        'malo', 'terrible', 'pésimo', 'horrible', 'desagradable', 'decepcionado',
-        'insatisfecho', 'enojado', 'frustrado', 'molesto', 'inútil', 'no me gusta',
-        'no funciona', 'error', 'problema', 'queja', 'decepciona', 'mal', 'peor',
-        '👎', '😠', '😡', '😤', '😒', '😞', '😟', '😕'
-    ]
-    
-    text_lower = text.lower()
-    
-    # Contar palabras positivas y negativas
-    positive_count = sum(1 for word in positive_words if word in text_lower)
-    negative_count = sum(1 for word in negative_words if word in text_lower)
-    
-    # Determinar sentimiento
-    if positive_count > negative_count:
-        sentiment["type"] = "positive"
-        sentiment["score"] = min(0.5 + (positive_count - negative_count) * 0.1, 0.9)
-    elif negative_count > positive_count:
-        sentiment["type"] = "negative"
-        sentiment["score"] = max(0.5 - (negative_count - positive_count) * 0.1, 0.1)
-    
-    return sentiment
 
 # --- Handlers de Telegram ---
 
@@ -436,11 +256,11 @@ async def ayuda_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = GEMINI_MODEL.generate_content(prompt)
         bot_response_text = response.text
-        await update.message.reply_text(bot_response_text)
+        await update.message.reply_text(bot_response_text, parse_mode=None)
     except Exception as e:
         logger.error(f"Error en la API de Gemini (ayuda): {e}")
         bot_response_text = "⚙️ Tuve un problema al procesar tu consulta. Por favor, intenta más tarde."
-        await update.message.reply_text(bot_response_text)
+        await update.message.reply_text(bot_response_text, parse_mode=None)
 
     # Registrar la interacción de ayuda
     await log_conversation(
@@ -468,12 +288,14 @@ async def recomendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         response = GEMINI_MODEL.generate_content(prompt)
         bot_response_text = response.text
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=bot_response_text
+            chat_id=update.effective_chat.id,
+            text=bot_response_text,
+            parse_mode=None  # Evitamos problemas de formato con Markdown
         )
     except Exception as e:
         logger.error(f"Error en la API de Gemini: {e}")
         bot_response_text = "⚙️ Tuve un problema al generar la recomendación. Por favor, intenta de nuevo."
-        await update.message.reply_text(bot_response_text)
+        await update.message.reply_text(bot_response_text, parse_mode=None)
     
     # Registrar conversación
     await log_conversation(
@@ -543,17 +365,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     user = update.effective_user
     logger.info(f"Usuario '{user.username}' envió un mensaje de texto para procesar con IA.")
-    
-    # Detectar preferencias a partir del mensaje del usuario
-    new_preferences = extract_preferences(user_text)
-    if new_preferences:
-        # Guardar preferencias detectadas para futuras interacciones
-        await update_user_preferences(user.id, new_preferences)
-        logger.info(f"Preferencias detectadas y guardadas: {new_preferences}")
-        
-    # Analizar sentimiento del usuario
-    sentiment = await analyze_sentiment(user_text)
-    logger.info(f"Sentimiento detectado: {sentiment}")
 
     # Obtener contextos
     faqs_context = get_faqs_from_api(only_questions=False)
@@ -580,90 +391,18 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info("Detectada pregunta de seguimiento sobre productos. Añadiendo contexto adicional.")
 
-    # Información adicional sobre categorías y tendencias de productos
-    categories_info = """
-    Categorías de Productos:
-    - Smartphones: Dispositivos móviles de alta gama con sistemas iOS o Android
-    - Laptops: Equipos portátiles para trabajo y gaming
-    - Accesorios: Periféricos, fundas, cargadores y adaptadores
-    - Audio: Auriculares, parlantes y sistemas de sonido
-    - Videojuegos: Consolas y títulos populares
-    
-    Tendencias Actuales:
-    - Los smartphones con IA integrada son los más buscados este trimestre
-    - Las laptops gaming tienen alta demanda entre estudiantes universitarios
-    - Los accesorios inalámbricos están creciendo en popularidad
-    - Los productos Apple y Samsung son los más vendidos en smartphones
-    - ASUS y MSI lideran en laptops gaming de alta gama
-    """
-    
-    # Información sobre ofertas y promociones
-    promotions_info = """
-    Promociones Activas:
-    - 15% de descuento en smartphones al comprar accesorios
-    - 2x1 en cargadores y cables seleccionados
-    - Financiamiento sin intereses en laptops premium
-    - Envío gratis en compras superiores a $100
-    - Garantía extendida al registrar tu producto en nuestra web
-    """
-    
-    # Personalidades predefinidas para el chatbot
-    personalities = [
-        "amigable y cercano, usando emojis ocasionalmente",
-        "profesional y conciso, enfocado en datos técnicos",
-        "entusiasta sobre tecnología, recomendando funcionalidades avanzadas"
-    ]
-    
-    # Selección de personalidad basada en el ID del usuario (para mantener consistencia)
-    personality_idx = user.id % len(personalities)
-    selected_personality = personalities[personality_idx]
-    
-    # Ajuste de personalidad según sentimiento detectado
-    if sentiment["type"] == "negative" and sentiment["score"] < 0.3:
-        # Si el usuario parece molesto, ser más profesional y directo
-        selected_personality = "profesional y directo, enfocado en resolver su problema rápidamente"
-    
-    # Información contextual sobre preferencias detectadas
-    preferences_context = ""
-    if new_preferences:
-        if "categoria_preferida" in new_preferences:
-            cat = new_preferences["categoria_preferida"]
-            preferences_context += f"El usuario ha mostrado interés en la categoría: {cat}. "
-            
-            # Añadir recomendaciones específicas para cada categoría
-            if cat == "smartphones":
-                preferences_context += "Considera mencionar nuestros modelos más vendidos como el iPhone 15 Pro (ID: 1) o el Samsung Galaxy S23 (ID: 2). "
-            elif cat == "laptops":
-                preferences_context += "Considera mencionar las ASUS ROG (ID: 2) para gaming o las MacBook Air (ID: 3) para productividad. "
-        
-        if "caracteristica_preferida" in new_preferences:
-            feat = new_preferences["caracteristica_preferida"]
-            preferences_context += f"El usuario ha mostrado preferencia por productos con característica: {feat}. "
-            
-            # Recomendaciones según características
-            if feat == "precio_bajo":
-                preferences_context += "Menciona promociones y opciones económicas. "
-            elif feat == "alta_calidad":
-                preferences_context += "Enfatiza la calidad y prestaciones premium de nuestros productos tope de gama. "
-
     # Prompt Final y Balanceado: Conversacional, conciso y con memoria.
     prompt = (
-        f"Eres un asistente de compras virtual para TechRetail. Tu personalidad es {selected_personality}. "
-        f"El sentimiento del usuario parece ser {sentiment['type']}. "
-        "Tu objetivo es dar respuestas claras, breves y útiles.\n\n"
+        "Eres un asistente de compras virtual para TechRetail. Tu personalidad es amigable y eficiente. Tu objetivo es dar respuestas claras, breves y útiles.\n\n"
         f"{follow_up_context if follow_up_about_products else ''}"
-        f"{preferences_context}\n"
         "**Reglas de oro para tus respuestas:**\n"
         "1.  **SÉ CONCISO:** Mantén tus respuestas cortas, idealmente menos de 40 palabras.\n"
         "2.  **USA SALTOS DE LÍNEA:** Para cualquier lista (especialmente productos), usa un salto de línea por cada ítem. No uses guiones.\n"
         "3.  **ANALIZA EL HISTORIAL CUIDADOSAMENTE:** Revisa el 'Historial Reciente' para entender el contexto completo.\n"
-        "4.  **MUESTRA CONOCIMIENTO DEL USUARIO:** Utiliza la información sobre sus compras previas y preferencias para personalizar tus respuestas.\n"
-        "5.  **RESPONDE A PREGUNTAS DE SEGUIMIENTO:** Si el usuario pregunta 'por qué', 'por qué esos productos' o similar, SIEMPRE responde basándote en tus recomendaciones previas, no en otros temas.\n"
-        "6.  **RECOMIENDA CON DATOS:** Si te piden una 'recomendación', sugiere 1 o 2 productos del catálogo y siempre incluye su ID. Ejemplo: 'Te sugiero el iPhone 15 (ID: 1)'.\n"
-        "7.  **EXPLICA TUS RECOMENDACIONES:** Cuando recomiendas productos, prepárate para explicar por qué los elegiste si el usuario pregunta después.\n"
-        "8.  **SI NO SABES:** Si la respuesta no está en tu conocimiento, di amablemente: 'No tengo información sobre eso, pero puedo ayudarte con nuestros productos o FAQs'.\n"
-        "9.  **CONOCE LAS CATEGORÍAS:** Utiliza la información sobre categorías y tendencias para enriquecer tus recomendaciones.\n"
-        "10. **MENCIONA PROMOCIONES:** Cuando sea relevante, menciona las promociones activas que puedan interesar al usuario.\n\n"
+        "4.  **RESPONDE A PREGUNTAS DE SEGUIMIENTO:** Si el usuario pregunta 'por qué', 'por qué esos productos' o similar, SIEMPRE responde basándote en tus recomendaciones previas, no en otros temas.\n"
+        "5.  **RECOMIENDA CON DATOS:** Si te piden una 'recomendación', sugiere 1 o 2 productos del catálogo y siempre incluye su ID. Ejemplo: 'Te sugiero el iPhone 15 (ID: 1)'.\n"
+        "6.  **EXPLICA TUS RECOMENDACIONES:** Cuando recomiendas productos, prepárate para explicar por qué los elegiste si el usuario pregunta después.\n"
+        "7.  **SI NO SABES:** Si la respuesta no está en tu conocimiento, di amablemente: 'No tengo información sobre eso, pero puedo ayudarte con nuestros productos o FAQs'.\n\n"
         "--- **Historial Reciente** ---\n"
         f"{history_context}\n"
         "--- **Fin del Historial** ---\n\n"
@@ -671,11 +410,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "**Preguntas Frecuentes (FAQs):**\n"
         f"{faqs_context}\n\n"
         "**Catálogo de Productos:**\n"
-        f"{products_context}\n\n"
-        "**Información de Categorías y Tendencias:**\n"
-        f"{categories_info}\n\n"
-        "**Promociones Activas:**\n"
-        f"{promotions_info}\n"
+        f"{products_context}\n"
         "--- **Fin Base de Conocimiento** ---\n\n"
         f"**Usuario:** \"{user_text}\""
     )
@@ -689,7 +424,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_response_text = response.text
         # Intenta enviar con el formato por defecto (Markdown)
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=bot_response_text
+            chat_id=update.effective_chat.id,
+            text=bot_response_text,
+            parse_mode=None  # Evitamos problemas de formato con Markdown
         )
     except BadRequest as e:
         if "Can't parse entities" in str(e):
@@ -703,7 +440,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Otro tipo de BadRequest que no es por formato
             logger.error(f"Error de Telegram (BadRequest) no relacionado con formato: {e}")
             bot_response_text_fallback = "⚙️ Tuve un problema al enviar la respuesta. Por favor, intenta de nuevo."
-            await update.message.reply_text(bot_response_text_fallback)
+            await update.message.reply_text(bot_response_text_fallback, parse_mode=None)
             # Actualizamos el texto del bot al de fallback para el log
             bot_response_text = bot_response_text_fallback
 
@@ -711,7 +448,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Captura cualquier otro error (ej. de la API de Gemini)
         logger.error(f"Error en la API de Gemini o al enviar mensaje (texto libre): {e}")
         bot_response_text = "⚙️ Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo."
-        await update.message.reply_text(bot_response_text)
+        await update.message.reply_text(bot_response_text, parse_mode=None)
     
     await log_conversation(
         user=update.effective_user,
