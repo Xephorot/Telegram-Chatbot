@@ -6,9 +6,7 @@ from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Count, Avg
 from django.contrib.admin.views.decorators import staff_member_required
-from django.http import HttpResponseForbidden, HttpResponse
-from django.template.loader import render_to_string
-from weasyprint import HTML
+from django.http import HttpResponseForbidden
 import os
 import google.generativeai as genai
 import logging
@@ -276,63 +274,3 @@ def chatbot_report_view(request):
     }
     
     return render(request, 'admin/chatbot_report.html', context)
-
-def chatbot_report_pdf_view(request):
-    """
-    Genera una versión en PDF del informe del chatbot.
-    """
-    # Reutilizamos la misma lógica de la vista HTML para obtener los datos.
-    total_users = User.objects.count()
-    total_conversations = Conversation.objects.count()
-    total_messages = Message.objects.count()
-    avg_order_value = Order.objects.aggregate(avg_value=Avg('total_amount'))['avg_value'] or 0
-    
-    gemini_analysis = {}
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if gemini_key:
-        try:
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            recent_user_messages = Message.objects.filter(sender='user').order_by('-timestamp')[:100]
-            messages_text = "\n".join([f"- \"{msg.content}\"" for msg in recent_user_messages])
-            if messages_text:
-                prompt = (
-                    "Eres un analista de datos experto en experiencia de cliente. "
-                    "Analiza los siguientes mensajes de usuarios de un chatbot de ventas. "
-                    "Basado en estos mensajes, proporciona un resumen en 3 secciones:\n\n"
-                    "1.  **Temas Principales:** Identifica y lista los 3-5 temas más recurrentes.\n"
-                    "2.  **Sentimiento General:** Describe el sentimiento predominante (Positivo, Negativo, Neutro).\n"
-                    "3.  **Sugerencias de Mejora:** Sugiere 1 o 2 acciones concretas para mejorar.\n\n"
-                    "Sé claro y conciso. No uses formato Markdown.\n\n"
-                    f"--- MENSAJES DE USUARIOS ---\n{messages_text}\n--- FIN DE MENSAJES ---\n\nAnálisis:"
-                )
-                response = model.generate_content(prompt)
-                analysis_text = response.text
-                gemini_analysis['main_topics'] = analysis_text.split("2.")[0].replace("1. Temas Principales:", "").strip()
-                gemini_analysis['general_sentiment'] = analysis_text.split("3.")[0].split("2.")[-1].replace("Sentimiento General:", "").strip()
-                gemini_analysis['improvement_suggestions'] = analysis_text.split("3.")[-1].replace("Sugerencias de Mejora:", "").strip()
-        except Exception as e:
-            logger.error(f"Error en PDF-API de Gemini: {e}")
-            gemini_analysis = {'main_topics': 'Error', 'general_sentiment': 'Error', 'improvement_suggestions': 'Error'}
-    
-    context = {
-        'title': 'Reporte del Chatbot',
-        'total_users': total_users,
-        'total_conversations': total_conversations,
-        'total_messages': total_messages,
-        'avg_order_value': avg_order_value,
-        'gemini_analysis': gemini_analysis,
-        'has_gemini_key': bool(gemini_key),
-    }
-
-    # Renderiza el template HTML a un string
-    html_string = render_to_string('admin/chatbot_report.html', context)
-    
-    # Crea el objeto PDF
-    pdf_file = HTML(string=html_string).write_pdf()
-
-    # Prepara la respuesta HTTP
-    response = HttpResponse(pdf_file, content_type='application/pdf')
-    response['Content-Disposition'] = 'attachment; filename="reporte_chatbot.pdf"'
-    
-    return response

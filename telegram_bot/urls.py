@@ -15,5 +15,4 @@ router.register(r'faqs', views.FAQViewSet)
 urlpatterns = [
     path('api/', include(router.urls)),
     path('reports/chatbot/', views.chatbot_report_view, name='chatbot_report'),
-    path('reports/chatbot/pdf/', views.chatbot_report_pdf_view, name='chatbot_report_pdf'),
 ] 

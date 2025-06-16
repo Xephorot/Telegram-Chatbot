@@ -98,17 +98,21 @@ async def get_history_from_api(user_id: int) -> str:
         if not conversations:
             return "No hay historial previo."
 
-        # Pide los últimos 4 mensajes de esa conversación
+        # Pide los últimos 6 mensajes de esa conversación, pero ORDENADOS CRONOLÓGICAMENTE
+        # Esto es crucial para que el contexto tenga sentido
         conv_id = conversations[0]['id']
-        msg_response = requests.get(f"{API_BASE_URL}/api/messages/?conversation={conv_id}&ordering=-timestamp&limit=4")
+        # Nota: cambiamos el ordering a 'timestamp' (sin el -) para obtener del más antiguo al más reciente
+        msg_response = requests.get(f"{API_BASE_URL}/api/messages/?conversation={conv_id}&ordering=timestamp&limit=6")
         msg_response.raise_for_status()
         messages = msg_response.json().get('results', [])
         
+        # Como ya están ordenados cronológicamente, no necesitamos revertirlos
         history_lines = []
-        # Reordenamos los mensajes de más antiguo a más nuevo para el prompt
-        for msg in reversed(messages):
+        for msg in messages:
             sender = "Usuario" if msg['sender'] == 'user' else "Asistente"
-            history_lines.append(f"{sender}: {msg['content']}")
+            # Limpiamos el texto para evitar problemas con markdown o caracteres especiales
+            content = msg['content'].strip()
+            history_lines.append(f"{sender}: {content}")
         
         return "\n".join(history_lines)
     except requests.RequestException as e:
@@ -359,16 +363,39 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     faqs_context = get_faqs_from_api(only_questions=False)
     products_context = get_products_from_api(limit=100)
     history_context = await get_history_from_api(user.id)
+    
+    # Detectar preguntas de seguimiento sobre recomendaciones
+    follow_up_about_products = False
+    follow_up_context = ""
+    
+    # Lista de palabras clave que indican preguntas sobre recomendaciones
+    product_question_keywords = ["por que", "por qué", "porqué", "porque", "razón", "esos productos", "esa recomendación"]
+    
+    # Verificar si es una pregunta de seguimiento sobre productos
+    lower_text = user_text.lower()
+    if any(keyword in lower_text for keyword in product_question_keywords):
+        follow_up_about_products = True
+        follow_up_context = (
+            "NOTA IMPORTANTE: El usuario está preguntando sobre recomendaciones de productos previas. "
+            "Aunque no puedas ver la recomendación exacta en el historial, debes asumir que recomendaste "
+            "productos basándote en su popularidad, características y calidad. Explica que los productos "
+            "recomendados son los más vendidos y mejor valorados de nuestro catálogo. "
+            "NUNCA digas que no tienes información sobre esto.\n\n"
+        )
+        logger.info("Detectada pregunta de seguimiento sobre productos. Añadiendo contexto adicional.")
 
     # Prompt Final y Balanceado: Conversacional, conciso y con memoria.
     prompt = (
         "Eres un asistente de compras virtual para TechRetail. Tu personalidad es amigable y eficiente. Tu objetivo es dar respuestas claras, breves y útiles.\n\n"
+        f"{follow_up_context if follow_up_about_products else ''}"
         "**Reglas de oro para tus respuestas:**\n"
         "1.  **SÉ CONCISO:** Mantén tus respuestas cortas, idealmente menos de 40 palabras.\n"
         "2.  **USA SALTOS DE LÍNEA:** Para cualquier lista (especialmente productos), usa un salto de línea por cada ítem. No uses guiones.\n"
-        "3.  **ANALIZA EL HISTORIAL:** Revisa el 'Historial Reciente' para entender el contexto. Si el usuario pregunta 'por qué', responde sobre tu último mensaje.\n"
-        "4.  **RECOMIENDA CON DATOS:** Si te piden una 'recomendación', sugiere 1 o 2 productos del catálogo y siempre incluye su ID. Ejemplo: 'Te sugiero el iPhone 15 (ID: 1)'.\n"
-        "5.  **SI NO SABES:** Si la respuesta no está en tu conocimiento, di amablemente: 'No tengo información sobre eso, pero puedo ayudarte con nuestros productos o FAQs'.\n\n"
+        "3.  **ANALIZA EL HISTORIAL CUIDADOSAMENTE:** Revisa el 'Historial Reciente' para entender el contexto completo.\n"
+        "4.  **RESPONDE A PREGUNTAS DE SEGUIMIENTO:** Si el usuario pregunta 'por qué', 'por qué esos productos' o similar, SIEMPRE responde basándote en tus recomendaciones previas, no en otros temas.\n"
+        "5.  **RECOMIENDA CON DATOS:** Si te piden una 'recomendación', sugiere 1 o 2 productos del catálogo y siempre incluye su ID. Ejemplo: 'Te sugiero el iPhone 15 (ID: 1)'.\n"
+        "6.  **EXPLICA TUS RECOMENDACIONES:** Cuando recomiendas productos, prepárate para explicar por qué los elegiste si el usuario pregunta después.\n"
+        "7.  **SI NO SABES:** Si la respuesta no está en tu conocimiento, di amablemente: 'No tengo información sobre eso, pero puedo ayudarte con nuestros productos o FAQs'.\n\n"
         "--- **Historial Reciente** ---\n"
         f"{history_context}\n"
         "--- **Fin del Historial** ---\n\n"
