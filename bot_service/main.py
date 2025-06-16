@@ -219,7 +219,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ `/reservar <ID> <cantidad>` - Asegura un producto.\n"
         "✅ `/ayuda` - Resuelve tus dudas sobre nosotros.\n"
         "✅ `/reservas` - Ver tus pedidos o reservas actuales.\n"
-        "✅ `/cancelar <ID>` - Cancela una reserva.\n\n"
+        "✅ `/cancelar <ID>` - Elimina una reserva.\n\n"
         "También puedes escribirme lo que necesites y usaré mi IA para ayudarte."
     )
     
@@ -437,13 +437,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cancel_keywords = ["cómo cancelo", "como cancelo", "cancelar reserva", "cancelar pedido", "como cancelo una reserva", "cómo cancelo una reserva"]
     if any(k in lower_text for k in cancel_keywords):
         cancel_text = (
-            "Para cancelar un pedido completo, escribe /cancelar para ver la lista numerada y luego /cancelar <número>.\n\n"
+            "Para eliminar un pedido completo, escribe /cancelar para ver la lista numerada y luego /cancelar <número>.\n\n"
             "Por ejemplo:\n"
             "1. /cancelar (para ver tus pedidos)\n"
-            "2. /cancelar 2 (para cancelar el pedido número 2)"
+            "2. /cancelar 2 (para eliminar el pedido número 2)"
         )
         await update.message.reply_text(cancel_text, parse_mode=None)
-        await log_conversation(user=user, user_text=user_text, bot_text="Instrucciones de cancelación enviadas.")
+        await log_conversation(user=user, user_text=user_text, bot_text="Instrucciones de eliminación enviadas.")
         return
 
     # Prompt Final y Balanceado: Conversacional, conciso y con memoria.
@@ -567,7 +567,7 @@ def delete_order_item_api(item_id: int) -> str:
         return "Error: La URL de la API no está configurada."
 
     try:
-        # Usar el nuevo endpoint de order-items
+        # Usar el endpoint de order-items
         logger.info(f"Intentando eliminar item {item_id} mediante DELETE")
         resp = requests.delete(f"{API_BASE_URL}/api/order-items/{item_id}/")
         
@@ -589,32 +589,24 @@ def delete_order_item_api(item_id: int) -> str:
         else:
             logger.error(f"Error al eliminar item {item_id}: código {resp.status_code}")
             
-            # Intentar actualizar la cantidad a cero como fallback
-            logger.info(f"Intentando actualizar cantidad a cero para item {item_id}")
-            patch_resp = requests.patch(
-                f"{API_BASE_URL}/api/order-items/{item_id}/", 
-                json={"quantity": 0}
-            )
-            
-            if patch_resp.status_code in (200, 202):
-                logger.info(f"Item {item_id} actualizado a cantidad cero")
-                return "✅ Artículo eliminado de tu reserva."
-                
-            # Último recurso: intentar cancelar la orden completa
+            # Intentar obtener el item para saber su orden
             try:
-                # Primero obtenemos el item para saber su orden
                 item_resp = requests.get(f"{API_BASE_URL}/api/order-items/{item_id}/")
                 if item_resp.status_code == 200:
                     order_id = item_resp.json().get("order")
                     if order_id:
-                        logger.info(f"Intentando cancelar orden completa {order_id} como fallback")
-                        cancel_resp = requests.delete(f"{API_BASE_URL}/api/orders/{order_id}/cancel/")
-                        
-                        if cancel_resp.status_code in (200, 202, 204):
-                            logger.info(f"Orden {order_id} cancelada exitosamente mediante endpoint cancel")
-                            return "✅ Tu pedido completo ha sido cancelado."
+                        # Verificar si es el único item en el pedido
+                        order_resp = requests.get(f"{API_BASE_URL}/api/orders/{order_id}/")
+                        if order_resp.status_code == 200:
+                            items = order_resp.json().get('items', [])
+                            if len(items) <= 1:
+                                # Si es el único item, eliminar todo el pedido
+                                logger.info(f"Item {item_id} es el único en el pedido {order_id}, eliminando pedido completo")
+                                cancel_resp = requests.delete(f"{API_BASE_URL}/api/orders/{order_id}/cancel/")
+                                if cancel_resp.status_code in (200, 202, 204):
+                                    return "✅ Tu pedido ha sido eliminado completamente."
             except Exception as e:
-                logger.error(f"Error en fallback de cancelación: {e}")
+                logger.error(f"Error al verificar pedido del item: {e}")
                 
             return "⚙️ No pude eliminar el artículo. Intenta de nuevo más tarde."
     except requests.RequestException as e:
@@ -639,35 +631,29 @@ async def reservas_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Cancelar reserva ---
 
 def cancel_order_api(order_id: int) -> str:
-    """Intenta cancelar (o eliminar) un pedido."""
+    """Intenta eliminar completamente un pedido."""
     if not API_BASE_URL:
         return "Error: La URL de la API no está configurada."
 
     try:
-        # Intentamos actualizar el estado a cancelled (PATCH)
-        logger.info(f"Intentando cancelar pedido {order_id} mediante PATCH")
-        patch_resp = requests.patch(
-            f"{API_BASE_URL}/api/orders/{order_id}/",
-            json={"status": "cancelled"},
-        )
-
-        if patch_resp.status_code == 404:
-            logger.warning(f"Pedido {order_id} no encontrado (404)")
-            return "❌ No se encontró un pedido con ese ID."
-        
-        if patch_resp.status_code in (200, 202):
-            logger.info(f"Pedido {order_id} cancelado exitosamente mediante PATCH")
-            return "✅ Reserva cancelada exitosamente."
-            
-        # Si no acepta PATCH, probamos DELETE como fallback
-        logger.warning(f"PATCH falló con código {patch_resp.status_code}, intentando DELETE")
+        # Intentamos eliminar directamente el pedido con DELETE
+        logger.info(f"Intentando eliminar pedido {order_id} mediante DELETE")
         del_resp = requests.delete(f"{API_BASE_URL}/api/orders/{order_id}/")
+        
         if del_resp.status_code == 204:
-            logger.info(f"Pedido {order_id} eliminado correctamente mediante DELETE")
+            logger.info(f"Pedido {order_id} eliminado correctamente")
             return "✅ Reserva eliminada correctamente."
             
-        # Si ambos métodos fallan, intentamos obtener los items y cancelarlos individualmente
-        logger.warning(f"DELETE falló con código {del_resp.status_code}, intentando cancelar items individualmente")
+        # Si DELETE directo falla, intentamos con el endpoint específico de cancelación
+        logger.warning(f"DELETE directo falló con código {del_resp.status_code}, intentando endpoint cancel")
+        cancel_resp = requests.delete(f"{API_BASE_URL}/api/orders/{order_id}/cancel/")
+        
+        if cancel_resp.status_code in (200, 202, 204):
+            logger.info(f"Pedido {order_id} eliminado mediante endpoint cancel")
+            return "✅ Reserva eliminada correctamente."
+            
+        # Si ambos métodos fallan, intentamos obtener los items y eliminarlos individualmente
+        logger.warning(f"Endpoint cancel falló con código {cancel_resp.status_code}, intentando eliminar items individualmente")
         
         # Obtener detalles del pedido para acceder a sus items
         order_resp = requests.get(f"{API_BASE_URL}/api/orders/{order_id}/")
@@ -680,37 +666,30 @@ def cancel_order_api(order_id: int) -> str:
                     item_id = item.get('id')
                     if item_id:
                         logger.info(f"Intentando eliminar item {item_id} del pedido {order_id}")
-                        # Intentar eliminar cada item
                         try:
-                            item_del_resp = requests.delete(f"{API_BASE_URL}/api/order-items/{item_id}/")
-                            if item_del_resp.status_code not in (204, 200):
-                                # Intentar con el otro formato de URL
-                                item_del_resp = requests.delete(f"{API_BASE_URL}/api/orderitems/{item_id}/")
+                            requests.delete(f"{API_BASE_URL}/api/order-items/{item_id}/")
                         except Exception as e:
                             logger.error(f"Error al eliminar item {item_id}: {e}")
                 
-                # Después de eliminar items, actualizar el estado del pedido
-                final_patch = requests.patch(
-                    f"{API_BASE_URL}/api/orders/{order_id}/",
-                    json={"status": "cancelled", "total_amount": 0},
-                )
+                # Después de eliminar todos los items, intentamos eliminar el pedido vacío
+                final_del = requests.delete(f"{API_BASE_URL}/api/orders/{order_id}/")
                 
-                if final_patch.status_code in (200, 202, 204):
-                    logger.info(f"Pedido {order_id} marcado como cancelado después de eliminar items")
-                    return "✅ Reserva cancelada exitosamente."
+                if final_del.status_code == 204:
+                    logger.info(f"Pedido {order_id} eliminado después de vaciar sus items")
+                    return "✅ Reserva eliminada correctamente."
         
-        logger.error(f"Todos los intentos de cancelación para el pedido {order_id} fallaron")
-        return "❌ No se pudo cancelar la reserva. Por favor, intenta más tarde."
+        logger.error(f"Todos los intentos de eliminación para el pedido {order_id} fallaron")
+        return "❌ No se pudo eliminar la reserva. Por favor, intenta más tarde."
 
     except requests.RequestException as e:
-        logger.error(f"Error al cancelar reserva {order_id}: {e}")
-        return "⚙️ No pude cancelar la reserva en este momento."
+        logger.error(f"Error al eliminar reserva {order_id}: {e}")
+        return "⚙️ No pude eliminar la reserva en este momento."
 
 async def cancelar_reserva_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Flujo interactivo para cancelar pedidos completos.
+    """Flujo interactivo para eliminar pedidos completos.
     
     1) /cancelar  -> muestra lista numerada de pedidos.
-    2) /cancelar <numero> -> cancela el pedido completo.
+    2) /cancelar <numero> -> elimina el pedido completo.
     """
     user = update.effective_user
     args = context.args
@@ -720,11 +699,11 @@ async def cancelar_reserva_handler(update: Update, context: ContextTypes.DEFAULT
         orders_text, index_map = _fetch_orders_with_map(user.id)
         if index_map:
             context.user_data['cancel_map'] = index_map
-            orders_text += "\n\nResponde con /cancelar <número> para cancelar el pedido completo."
+            orders_text += "\n\nResponde con /cancelar <número> para eliminar el pedido completo."
         await update.message.reply_text(orders_text, parse_mode=None)
         return
 
-    # Paso 2: con número provisto - cancelar pedido completo
+    # Paso 2: con número provisto - eliminar pedido completo
     if len(args) == 1 and args[0].isdigit():
         if 'cancel_map' not in context.user_data:
             await update.message.reply_text("Primero usa /cancelar sin argumentos para listar tus pedidos y obtener sus números.")
@@ -736,7 +715,7 @@ async def cancelar_reserva_handler(update: Update, context: ContextTypes.DEFAULT
             await update.message.reply_text("Número inválido. Prueba de nuevo con /cancelar.")
             return
 
-        logger.info(f"Usuario {user.id} solicitó cancelar pedido #{idx} (ID: {order_id})")
+        logger.info(f"Usuario {user.id} solicitó eliminar pedido #{idx} (ID: {order_id})")
         result_text = cancel_order_api(order_id)
         await update.message.reply_text(result_text, parse_mode=None)
 

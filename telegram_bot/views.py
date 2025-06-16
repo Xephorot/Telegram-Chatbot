@@ -180,9 +180,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         
     @action(detail=True, methods=['delete'])
     def cancel(self, request, pk=None):
-        """Cancela un pedido completo marcándolo como cancelled."""
+        """Cancela un pedido completo eliminándolo de la base de datos."""
         order = self.get_object()
-        logger.info(f"Cancelando pedido {order.id} para usuario {order.user.telegram_id}")
+        logger.info(f"Eliminando pedido {order.id} para usuario {order.user.telegram_id}")
         
         # Restaurar el stock de los productos
         try:
@@ -192,15 +192,14 @@ class OrderViewSet(viewsets.ModelViewSet):
                 product.save()
                 logger.info(f"Stock restaurado para producto {product.id}: +{item.quantity} unidades")
         except Exception as e:
-            logger.error(f"Error al restaurar stock en cancelación de pedido {order.id}: {e}")
+            logger.error(f"Error al restaurar stock en eliminación de pedido {order.id}: {e}")
         
-        # Marcar como cancelado
-        order.status = 'cancelled'
-        order.save()
+        # Eliminar el pedido completamente
+        order.delete()
         
-        logger.info(f"Pedido {order.id} marcado como cancelado exitosamente")
-        return Response({"status": "cancelled", "message": "Pedido cancelado exitosamente"}, 
-                        status=status.HTTP_200_OK)
+        logger.info(f"Pedido {pk} eliminado completamente de la base de datos")
+        return Response({"status": "deleted", "message": "Pedido eliminado completamente"}, 
+                        status=status.HTTP_204_NO_CONTENT)
 
 class OrderItemViewSet(viewsets.ModelViewSet):
     queryset = OrderItem.objects.all()
