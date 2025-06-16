@@ -85,6 +85,36 @@ def get_faqs_from_api(only_questions: bool = False) -> str:
         logger.error(f"Error al contactar la API de FAQs: {e}")
         return "La información de preguntas frecuentes no está disponible en este momento."
 
+async def get_history_from_api(user_id: int) -> str:
+    """Obtiene el historial de conversación reciente para un usuario desde la API."""
+    if not API_BASE_URL:
+        return ""
+    try:
+        # Pide la última conversación para el contexto más reciente
+        conv_response = requests.get(f"{API_BASE_URL}/api/conversations/?user__telegram_id={user_id}&ordering=-timestamp&limit=1")
+        conv_response.raise_for_status()
+        conversations = conv_response.json().get('results', [])
+        
+        if not conversations:
+            return "No hay historial previo."
+
+        # Pide los últimos 4 mensajes de esa conversación
+        conv_id = conversations[0]['id']
+        msg_response = requests.get(f"{API_BASE_URL}/api/messages/?conversation={conv_id}&ordering=-timestamp&limit=4")
+        msg_response.raise_for_status()
+        messages = msg_response.json().get('results', [])
+        
+        history_lines = []
+        # Reordenamos los mensajes de más antiguo a más nuevo para el prompt
+        for msg in reversed(messages):
+            sender = "Usuario" if msg['sender'] == 'user' else "Asistente"
+            history_lines.append(f"{sender}: {msg['content']}")
+        
+        return "\n".join(history_lines)
+    except requests.RequestException as e:
+        logger.error(f"Error al obtener historial desde la API: {e}")
+        return "No se pudo recuperar el historial."
+
 async def log_conversation(user: dict, user_text: str, bot_text: str):
     """Guarda la conversación completa (usuario, conversación, mensajes) en la API."""
     if not API_BASE_URL:
@@ -328,18 +358,20 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Obtener contextos
     faqs_context = get_faqs_from_api(only_questions=False)
     products_context = get_products_from_api(limit=100)
+    history_context = await get_history_from_api(user.id)
 
-    # Prompt con una personalidad más natural y conversacional
+    # Prompt Final y Balanceado: Conversacional, conciso y con memoria.
     prompt = (
-        "Eres un asistente de compras virtual para TechRetail, una tienda de tecnología y artículos para el hogar. Tu personalidad es amigable, natural y muy servicial. Tu objetivo principal es ayudar a los usuarios a encontrar lo que buscan y a resolver sus dudas de una manera conversacional.\n\n"
-        "**Tu base de conocimiento es la siguiente:**\n"
-        "1. Un 'Catálogo de Productos'.\n"
-        "2. Una lista de 'Preguntas Frecuentes (FAQs)' sobre la empresa.\n\n"
-        "**Cómo debes conversar:**\n"
-        "- **Para recomendaciones:** Si el usuario pide una 'recomendación', 'sugerencia' o tu 'opinión', sé creativo. Analiza el catálogo y sugiérele 1 o 2 productos que creas que le pueden gustar. Justifica brevemente tu elección de forma natural (ej: '¡Claro! Te podría gustar el [producto], es muy popular y tiene excelentes características.').\n"
-        "- **Para preguntas específicas:** Si la pregunta se responde con las FAQs o los detalles de un producto, usa esa información para dar una respuesta directa.\n"
-        "- **Si no sabes la respuesta:** ¡No pasa nada! Sé honesto y proactivo. Responde algo como: 'Vaya, sobre eso no tengo información. Pero si quieres, puedo buscar algo en nuestro catálogo de productos o mostrarte las preguntas frecuentes.'\n"
-        "- **Importante:** Habla siempre en un tono cercano. Evita las listas con guiones y las respuestas robóticas. Haz que la conversación fluya.\n\n"
+        "Eres un asistente de compras virtual para TechRetail. Tu personalidad es amigable y eficiente. Tu objetivo es dar respuestas claras, breves y útiles.\n\n"
+        "**Reglas de oro para tus respuestas:**\n"
+        "1.  **SÉ CONCISO:** Mantén tus respuestas cortas, idealmente menos de 40 palabras.\n"
+        "2.  **USA SALTOS DE LÍNEA:** Para cualquier lista (especialmente productos), usa un salto de línea por cada ítem. No uses guiones.\n"
+        "3.  **ANALIZA EL HISTORIAL:** Revisa el 'Historial Reciente' para entender el contexto. Si el usuario pregunta 'por qué', responde sobre tu último mensaje.\n"
+        "4.  **RECOMIENDA CON DATOS:** Si te piden una 'recomendación', sugiere 1 o 2 productos del catálogo y siempre incluye su ID. Ejemplo: 'Te sugiero el iPhone 15 (ID: 1)'.\n"
+        "5.  **SI NO SABES:** Si la respuesta no está en tu conocimiento, di amablemente: 'No tengo información sobre eso, pero puedo ayudarte con nuestros productos o FAQs'.\n\n"
+        "--- **Historial Reciente** ---\n"
+        f"{history_context}\n"
+        "--- **Fin del Historial** ---\n\n"
         "--- **Base de Conocimiento** ---\n"
         "**Preguntas Frecuentes (FAQs):**\n"
         f"{faqs_context}\n\n"
@@ -348,6 +380,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "--- **Fin Base de Conocimiento** ---\n\n"
         f"**Usuario:** \"{user_text}\""
     )
+    
+    # Logueamos el prompt completo para facilitar la depuración
+    logger.info(f"--- PROMPT ENVIADO A GEMINI ---\n{prompt}\n---------------------------")
     
     bot_response_text = "Tuve un problema para procesar tu solicitud. Por favor, intenta de nuevo."
     try:

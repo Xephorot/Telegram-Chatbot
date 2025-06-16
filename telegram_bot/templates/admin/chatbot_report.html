@@ -7,6 +7,23 @@
 
 {% block content %}
 <style>
+    .report-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    .pdf-button {
+        background-color: #007bff;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 5px;
+        text-decoration: none;
+        font-weight: bold;
+    }
+    .pdf-button:hover {
+        background-color: #0056b3;
+    }
     .metric-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -55,6 +72,7 @@
         background-color: #f8f9fa;
         padding: 15px;
         border-radius: 5px;
+        color: #212529; /* Asegura que el texto sea oscuro y legible */
     }
     .no-key-warning {
         background-color: #fff3cd;
@@ -67,7 +85,10 @@
 </style>
 
 <div id="content-main">
-    <h1>📊 {{ title }}</h1>
+    <div class="report-header">
+        <h1>📊 {{ title }}</h1>
+        <a href="{% url 'chatbot_report_pdf' %}" class="pdf-button">Exportar como PDF</a>
+    </div>
     
     <!-- Métricas Numéricas -->
     <div class="metric-grid">

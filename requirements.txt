@@ -1,6 +1,6 @@
 dj-database-url==2.1.0
 Django==5.2.3
-django-cors-headers==4.4.0
+django-cors-headers==4.3.1
 django-filter==23.5
 djangorestframework==3.16.0
 google-generativeai==0.8.5
@@ -9,4 +9,5 @@ Markdown==3.6
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1
 python-telegram-bot==22.1
-whitenoise[brotli] 
+whitenoise==6.7.0
+weasyprint==62.5 
