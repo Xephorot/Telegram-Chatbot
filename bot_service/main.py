@@ -87,10 +87,20 @@ async def recomendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     try:
         response = GEMINI_MODEL.generate_content(prompt)
-        await update.message.reply_text(response.text)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, text=response.text, parse_mode=ParseMode.MARKDOWN
+        )
     except Exception as e:
-        logger.error(f"Error en la API de Gemini: {e}")
-        await update.message.reply_text("Tuve un problema al generar la recomendación. Por favor, intenta de nuevo.")
+        if "Can't parse entities" in str(e):
+            logger.warning("Error de parseo de Markdown desde Gemini. Reintentando como texto plano.")
+            try:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=response.text)
+            except Exception as e_plain:
+                logger.error(f"Error al enviar como texto plano: {e_plain}")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="Tuve un problema al procesar la respuesta.")
+        else:
+            logger.error(f"Error en la API de Gemini: {e}")
+            await update.message.reply_text("Tuve un problema al generar la recomendación. Por favor, intenta de nuevo.")
 
 async def reservar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /reservar."""
@@ -166,10 +176,20 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         response = GEMINI_MODEL.generate_content(prompt)
-        await update.message.reply_text(response.text)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, text=response.text, parse_mode=ParseMode.MARKDOWN
+        )
     except Exception as e:
-        logger.error(f"Error en la API de Gemini (texto libre): {e}")
-        await update.message.reply_text("Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo.")
+        if "Can't parse entities" in str(e):
+            logger.warning("Error de parseo de Markdown desde Gemini. Reintentando como texto plano.")
+            try:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=response.text)
+            except Exception as e_plain:
+                logger.error(f"Error al enviar como texto plano: {e_plain}")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="Tuve un problema al procesar la respuesta.")
+        else:
+            logger.error(f"Error en la API de Gemini (texto libre): {e}")
+            await update.message.reply_text("Tuve un problema al procesar tu mensaje. Por favor, intenta de nuevo.")
 
 # --- Función Principal ---
 
