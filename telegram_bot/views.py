@@ -8,6 +8,9 @@ from django.db.models import Count, Avg
 from django.contrib.admin.views.decorators import staff_member_required
 import os
 import google.generativeai as genai
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     Category, Product, User, Conversation, Message, 
@@ -242,8 +245,7 @@ def chatbot_report_view(request):
             gemini_analysis['main_topics'] = error_message
             logger.error(error_message)
 
-
-    context = {
+    context = { 
         'title': 'Reporte del Chatbot',
         'total_users': total_users,
         'total_conversations': total_conversations,

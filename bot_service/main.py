@@ -56,21 +56,29 @@ def get_products_from_api(limit: int = 50) -> str:
         logger.error(f"Error al contactar la API de productos: {e}")
         return "⚙️ Lo siento, no pude conectarme con el sistema de productos en este momento."
 
-def get_faqs_from_api() -> str:
-    """Obtiene la lista de FAQs desde la API de Render."""
+def get_faqs_from_api(only_questions: bool = False) -> str:
+    """
+    Obtiene la lista de FAQs desde la API de Render.
+    Si only_questions es True, devuelve solo la lista de preguntas.
+    """
     if not API_BASE_URL:
         return "Error: La URL de la API no está configurada."
     try:
-        response = requests.get(f"{API_BASE_URL}/api/faqs/")
+        # Usamos un límite alto para traer todas las FAQs, asumiendo que no serán miles.
+        response = requests.get(f"{API_BASE_URL}/api/faqs/?limit=100")
         response.raise_for_status()
         
         data = response.json()
         faqs = data.get('results', [])
         
         if not faqs:
-            return "" # Retorna vacío si no hay FAQs para no polucionar el prompt
+            return "" # Retorna vacío si no hay FAQs
+
+        if only_questions:
+            lines = [f"❓ {faq['question']}" for faq in faqs]
+        else:
+            lines = [f"- Pregunta: {faq['question']}\n  Respuesta: {faq['answer']}" for faq in faqs]
             
-        lines = [f"- Pregunta: {faq['question']}\n  Respuesta: {faq['answer']}" for faq in faqs]
         return "\n".join(lines)
     except requests.RequestException as e:
         logger.error(f"Error al contactar la API de FAQs: {e}")
@@ -154,22 +162,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "También puedes escribirme lo que necesites y usaré mi IA para ayudarte."
     )
     
-    bot_response_text = ""
-    try:
-        response = GEMINI_MODEL.generate_content(welcome_text)
-        bot_response_text = response.text
-        await update.message.reply_text(bot_response_text)
-    except Exception as e:
-        logger.error(f"Error en la API de Gemini (welcome_text): {e}")
-        bot_response_text = "⚙️ Tuve un problema al generar la respuesta de bienvenida. Por favor, intenta de nuevo."
-        await update.message.reply_text(bot_response_text)
-    
-    # Registrar conversación
-    await log_conversation(
-        user=update.effective_user,
-        user_text=update.message.text,
-        bot_text=bot_response_text
-    )
+    # Simplemente envía el mensaje de bienvenida, sin procesarlo con la IA.
+    await update.message.reply_text(welcome_text)
+    logger.info(f"Usuario {user.username} ({user.id}) inició una conversación con /start.")
+    # No es necesario registrar este mensaje inicial como una "conversación" de IA.
 
 async def productos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /productos."""
@@ -177,26 +173,38 @@ async def productos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(product_list)
 
 async def ayuda_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Maneja el comando de ayuda, enfocado en FAQs."""
+    """
+    Maneja el comando de ayuda.
+    - Si se usa solo `/ayuda`, muestra la lista de FAQs.
+    - Si se usa `/ayuda <pregunta>`, intenta responderla usando la IA.
+    """
     user_question = " ".join(context.args)
     
+    # Caso 1: El usuario solo escribe /ayuda para ver las opciones
     if not user_question:
-        await update.message.reply_text(
-            "Puedes preguntarme lo que quieras sobre la tienda, envíos, pagos, etc.\n\n"
-            "Por ejemplo: `/ayuda ¿hacen envíos a todo el país?`"
-        )
+        faq_questions = get_faqs_from_api(only_questions=True)
+        if not faq_questions:
+            response_text = "Actualmente no tenemos una sección de preguntas frecuentes, pero puedes consultarme lo que necesites."
+        else:
+            response_text = (
+                "Aquí tienes las preguntas más frecuentes. ¡Espero que te sirvan! 👍\n\n"
+                f"{faq_questions}\n\n"
+                "Puedes escribirme una de estas preguntas o cualquier otra duda que tengas."
+            )
+        await update.message.reply_text(response_text)
         return
 
-    faqs_context = get_faqs_from_api()
+    # Caso 2: El usuario hace una pregunta específica con /ayuda
+    faqs_context = get_faqs_from_api(only_questions=False) # Obtenemos Q&A
     prompt = (
-        "Actúa como un asistente de soporte al cliente. Tu única fuente de verdad es la siguiente lista de Preguntas y Respuestas. "
-        "Si la pregunta del usuario se puede responder con esta información, hazlo. Si no, indica amablemente que no tienes esa información. "
-        "Sé breve y directo.\n\n"
+        "Eres un asistente de soporte al cliente muy amable. Tu única fuente de verdad es la siguiente lista de Preguntas y Respuestas (FAQs). "
+        "Tu tarea es responder a la pregunta del usuario basándote únicamente en este contexto. Sé conciso y directo.\n\n"
         "--- INICIO CONTEXTO FAQs ---\n"
         f"{faqs_context}\n"
         "--- FIN CONTEXTO FAQs ---\n\n"
-        f"Pregunta del usuario: \"{user_question}\"\n"
-        "Tu respuesta basada únicamente en el contexto:"
+        f"Pregunta del usuario: \"{user_question}\"\n\n"
+        "Si la respuesta está en el contexto, respóndela amablemente. "
+        "Si la respuesta NO está en el contexto, di: 'Lo siento, no tengo información sobre eso. Aquí tienes otras preguntas que quizás te ayuden:' y lista 3 preguntas del contexto que más se parezcan a la del usuario."
     )
 
     bot_response_text = ""
@@ -300,31 +308,37 @@ async def reservar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No pude conectarme al sistema de pedidos. Inténtalo más tarde.")
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Maneja los mensajes de texto libre usando Gemini, priorizando FAQs."""
+    """Maneja cualquier mensaje de texto que no sea un comando."""
     if not GEMINI_MODEL:
-        await update.message.reply_text("Lo siento, no puedo procesar tu solicitud en este momento.")
+        await update.message.reply_text("Lo siento, la función de IA no está disponible ahora mismo.")
         return
-        
-    user_text = update.message.text
-    product_list = get_products_from_api(limit=50)
-    faqs_context = get_faqs_from_api()
 
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+    
+    user_text = update.message.text
+    logger.info(f"Usuario '{update.effective_user.username}' envió un mensaje de texto para procesar con IA.")
+
+    # Obtener contextos
+    faqs_context = get_faqs_from_api(only_questions=False)
+    products_context = get_products_from_api(limit=100)
+
+    # Prompt mejorado
     prompt = (
-        "Actúa como un asistente de ventas y soporte al cliente para una tienda. Eres amigable, directo y muy conciso (máx 50 palabras). "
-        "Tu prioridad es responder preguntas usando el contexto de FAQs. Si no encuentras la respuesta ahí, usa el contexto de Productos. "
-        "No uses ningún formato especial, solo texto y saltos de línea. "
-        "Si el usuario quiere reservar, guíalo para que use el comando `/reservar <ID> <cantidad>`.\n\n"
+        "Eres un asistente de ventas y soporte para una tienda online. Eres amable, eficiente y te ciñes a la información proporcionada.\n"
+        "Tu objetivo es responder la pregunta del usuario utilizando el siguiente contexto. Debes seguir estas reglas en orden:\n"
+        "1.  **PRIORIDAD MÁXIMA: FAQs.** Revisa primero el contexto de Preguntas Frecuentes (FAQs). Si la pregunta del usuario se responde con una FAQ, usa esa respuesta y nada más.\n"
+        "2.  **PRODUCTOS Y CONSULTAS GENERALES:** Si la pregunta no está en las FAQs, utiliza el contexto de la lista de productos y tu conocimiento general para responder sobre cotizaciones, disponibilidad, detalles de productos, etc.\n"
+        "3.  **SI NO SABES LA RESPUESTA:** Si la información no está ni en las FAQs ni en la lista de productos, NO inventes una respuesta. En su lugar, responde de forma amable: 'Mmm, no estoy seguro de cómo responder a eso. ¿Quizás alguna de estas preguntas frecuentes te ayude?' y a continuación, lista las 3 preguntas (solo la pregunta, sin la respuesta) de las FAQs que creas que son más relevantes para la consulta del usuario. Si no hay FAQs, simplemente di que no tienes la información.\n\n"
         "--- INICIO CONTEXTO FAQs ---\n"
         f"{faqs_context}\n"
         "--- FIN CONTEXTO FAQs ---\n\n"
-        "--- INICIO CONTEXTO Productos ---\n"
-        f"{product_list}\n"
-        "--- FIN CONTEXTO Productos ---\n\n"
-        f"Pregunta del usuario: \"{user_text}\"\n"
-        "Tu respuesta breve y útil (priorizando FAQs):"
+        "--- INICIO CONTEXTO PRODUCTOS ---\n"
+        f"{products_context}\n"
+        "--- FIN CONTEXTO PRODUCTOS ---\n\n"
+        f"**Pregunta del Usuario:** \"{user_text}\""
     )
     
-    bot_response_text = ""
+    bot_response_text = "No estoy seguro de cómo ayudarte con eso. Intenta reformular tu pregunta."
     try:
         response = GEMINI_MODEL.generate_content(prompt)
         bot_response_text = response.text
