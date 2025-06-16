@@ -194,9 +194,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /start."""
     user = update.effective_user
     
-    # Limpia el historial de conversación anterior para este usuario
-    if 'history' in context.user_data:
-        del context.user_data['history']
+    # Limpia datos de usuario al iniciar
+    context.user_data.clear()
+    
+    # También intentamos crear una nueva conversación en la API
+    try:
+        if API_BASE_URL:
+            # Primero obtener el user_id
+            user_response = requests.get(f"{API_BASE_URL}/api/users/?telegram_id={user.id}")
+            if user_response.status_code == 200:
+                users = user_response.json().get('results', [])
+                if users:
+                    user_id = users[0]['id']
+                    # Crear nueva conversación
+                    conv_payload = {"user": user_id}
+                    requests.post(f"{API_BASE_URL}/api/conversations/", json=conv_payload)
+    except Exception as e:
+        logger.error(f"Error al crear nueva conversación en /start: {e}")
         
     welcome_text = (
         f"¡Hola {user.first_name}! 👋 Soy tu asistente de compras virtual.\n\n"
@@ -209,15 +223,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "También puedes escribirme lo que necesites y usaré mi IA para ayudarte."
     )
     
-    # Envía bienvenida
+    # Simplemente envía el mensaje de bienvenida, sin procesarlo con la IA.
     await update.message.reply_text(welcome_text)
-
-    # Registrar conversación inicial para limpiar historial
-    await log_conversation(
-        user=user,
-        user_text="/start",
-        bot_text=welcome_text,
-    )
+    logger.info(f"Usuario {user.username} ({user.id}) inició una conversación con /start.")
+    # No es necesario registrar este mensaje inicial como una "conversación" de IA.
 
 async def productos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /productos."""
@@ -409,13 +418,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "qué tengo reservado",
         "reservado",
         "reservados",
+        "que reservas tengo",
+        "qué reservas tengo",
         "mis ordenes",
         "mis órdenes",
     ]
     if any(k in lower_text for k in orders_keywords):
         orders_text, _ = _fetch_orders_with_map(user.id)
         # Si el usuario no tiene reservas, orientar al comando explícito
-        if orders_text.startswith("No tienes") or orders_text.startswith("No pude"):
+        if "No tienes pedidos" in orders_text or "No pude recuperar" in orders_text:
             orders_text = "No tengo información sobre tus reservas en este momento. Usa el comando /reservas para consultarlas."
 
         await update.message.reply_text(orders_text, parse_mode=None)
@@ -423,12 +434,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return  # No pasamos a IA
 
     # Si el usuario pregunta cómo cancelar
-    cancel_keywords = ["cómo cancelo", "como cancelo", "cancelar reserva", "cancelar pedido", "como cancelo una reserva"]
+    cancel_keywords = ["cómo cancelo", "como cancelo", "cancelar reserva", "cancelar pedido", "como cancelo una reserva", "cómo cancelo una reserva"]
     if any(k in lower_text for k in cancel_keywords):
-        await update.message.reply_text(
-            "Para cancelar un artículo reservado, escribe /cancelar para ver la lista numerada y luego /cancelar <número>.",
-            parse_mode=None,
+        cancel_text = (
+            "Para cancelar un artículo reservado, escribe /cancelar para ver la lista numerada y luego /cancelar <número>.\n\n"
+            "Por ejemplo:\n"
+            "1. /cancelar (para ver tus artículos)\n"
+            "2. /cancelar 2 (para eliminar el artículo número 2)"
         )
+        await update.message.reply_text(cancel_text, parse_mode=None)
         await log_conversation(user=user, user_text=user_text, bot_text="Instrucciones de cancelación enviadas.")
         return
 
@@ -497,7 +511,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_text=bot_response_text
     )
 
-# --- Helpers para pedidos/reservas ---
+# --- Nuevo helper para pedidos/reservas ---
 
 from typing import Tuple, Dict
 
@@ -507,7 +521,7 @@ def get_orders_from_api(telegram_id: int, limit: int = 10) -> str:
     return text
 
 def _fetch_orders_with_map(telegram_id: int, limit: int = 10) -> Tuple[str, Dict[int, int]]:
-    """Devuelve (texto_resumen, map_index_a_orderID)."""
+    """Devuelve (texto_resumen, map_index_a_orderItemID)."""
     if not API_BASE_URL:
         return "Error: La URL de la API no está configurada.", {}
 
@@ -523,50 +537,80 @@ def _fetch_orders_with_map(telegram_id: int, limit: int = 10) -> Tuple[str, Dict
         if not orders:
             return "No tienes pedidos o reservas en este momento.", {}
 
-        lines: list[str] = []
+        lines = []
         index_map: Dict[int, int] = {}
-        idx = 1
+        global_idx = 1
         for o in orders:
-            header = f"[ {idx} ] Pedido ID: {o['id']} | Estado: {o['status']} | Total: ${float(o['total_amount']):.2f}"
-            lines.append(header)
-            for it in o.get("items", []):
+            lines.append(
+                f"🛒 Pedido ID: {o['id']} | Estado: {o['status']} | Total: ${float(o['total_amount']):.2f}"
+            )
+            # Items
+            items = o.get("items", [])
+            for it in items:
                 prod = it.get("product_details", {})
                 name = prod.get("name", "Producto")
                 qty = it.get("quantity", 1)
                 price = float(it.get("price", 0))
-                lines.append(f"   • {qty} x {name} (${price:.2f} c/u)")
-            lines.append("")
-            index_map[idx] = o['id']
-            idx += 1
-
+                lines.append(f"   [{global_idx}] {qty} x {name} (${price:.2f} c/u)")
+                index_map[global_idx] = it.get("id")
+                global_idx += 1
+            lines.append("")  # blank line between orders
         return "\n".join(lines).strip(), index_map
     except requests.RequestException as e:
         logger.error(f"Error al obtener pedidos del usuario: {e}")
         return "No pude recuperar tus pedidos en este momento.", {}
 
-def cancel_order_api(order_id: int) -> str:
-    """Intenta cancelar un pedido completo."""
+def delete_order_item_api(item_id: int) -> str:
+    """Intenta eliminar un OrderItem por ID."""
     if not API_BASE_URL:
         return "Error: La URL de la API no está configurada."
 
     try:
-        patch_resp = requests.patch(
-            f"{API_BASE_URL}/api/orders/{order_id}/",
-            json={"status": "cancelled"},
-        )
-        if patch_resp.status_code in (200, 202):
-            return "✅ Reserva cancelada exitosamente."
-        if patch_resp.status_code == 404:
-            return "❌ No se encontró un pedido con ese ID."
+        # Primero intentamos con el endpoint de order_items
+        resp = requests.delete(f"{API_BASE_URL}/api/order-items/{item_id}/")
+        
+        # Si falla, probamos con orderitems (sin guión)
+        if resp.status_code >= 400:
+            resp = requests.delete(f"{API_BASE_URL}/api/orderitems/{item_id}/")
 
-        # Fallback DELETE
-        del_resp = requests.delete(f"{API_BASE_URL}/api/orders/{order_id}/")
-        if del_resp.status_code == 204:
-            return "✅ Reserva eliminada correctamente."
-        return "⚙️ No pude cancelar la reserva."
+        # Si sigue fallando, probamos actualizar el OrderItem con quantity=0
+        if resp.status_code >= 400:
+            patch_resp = requests.patch(
+                f"{API_BASE_URL}/api/order-items/{item_id}/", 
+                json={"quantity": 0}
+            )
+            if patch_resp.status_code == 200:
+                return "✅ Artículo eliminado de tu reserva."
+
+        if resp.status_code == 204:
+            return "✅ Artículo eliminado de tu reserva."
+        elif resp.status_code == 404:
+            return "❌ No se encontró ese artículo."
+        else:
+            # Intentar eliminar la orden completa como último recurso
+            # Primero obtenemos el item para saber su orden
+            try:
+                # Intentamos ambas versiones del endpoint
+                item_resp = requests.get(f"{API_BASE_URL}/api/order-items/{item_id}/")
+                if item_resp.status_code >= 400:
+                    item_resp = requests.get(f"{API_BASE_URL}/api/orderitems/{item_id}/")
+                
+                if item_resp.status_code == 200:
+                    order_id = item_resp.json().get("order")
+                    if order_id:
+                        cancel_resp = requests.patch(
+                            f"{API_BASE_URL}/api/orders/{order_id}/",
+                            json={"status": "cancelled"}
+                        )
+                        if cancel_resp.status_code in (200, 202):
+                            return "✅ Tu pedido completo ha sido cancelado."
+            except Exception as e:
+                logger.error(f"Error en fallback de cancelación: {e}")
+                
+            return "⚙️ No pude eliminar el artículo. Intenta de nuevo más tarde."
     except requests.RequestException as e:
-        logger.error(f"Error al cancelar reserva: {e}")
-        return "⚙️ No pude cancelar la reserva en este momento."
+        logger.error(f"Error al eliminar OrderItem: {e}")
+        return "⚙️ No pude eliminar el artículo."
 
 # --- Nuevo handler para /reservas o /pedidos ---
 
@@ -584,6 +628,33 @@ async def reservas_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # --- Cancelar reserva ---
+
+def cancel_order_api(order_id: int) -> str:
+    """Intenta cancelar (o eliminar) un pedido."""
+    if not API_BASE_URL:
+        return "Error: La URL de la API no está configurada."
+
+    try:
+        # Intentamos actualizar el estado a cancelled (PATCH)
+        patch_resp = requests.patch(
+            f"{API_BASE_URL}/api/orders/{order_id}/",
+            json={"status": "cancelled"},
+        )
+
+        if patch_resp.status_code == 404:
+            return "❌ No se encontró un pedido con ese ID."
+        if patch_resp.status_code not in (200, 202):
+            # Si no acepta PATCH, probamos DELETE como fallback
+            del_resp = requests.delete(f"{API_BASE_URL}/api/orders/{order_id}/")
+            if del_resp.status_code == 204:
+                return "✅ Reserva eliminada correctamente."
+            return "❌ No se pudo cancelar la reserva."
+
+        return "✅ Reserva cancelada exitosamente."
+
+    except requests.RequestException as e:
+        logger.error(f"Error al cancelar reserva: {e}")
+        return "⚙️ No pude cancelar la reserva en este momento."
 
 async def cancelar_reserva_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Flujo interactivo para cancelar reservas.
@@ -603,19 +674,19 @@ async def cancelar_reserva_handler(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(orders_text, parse_mode=None)
         return
 
-    # Paso 2: con número provisto (cancelar pedido)
+    # Paso 2: con número provisto
     if len(args) == 1 and args[0].isdigit():
         if 'cancel_map' not in context.user_data:
             await update.message.reply_text("Primero usa /cancelar sin argumentos para listar tus artículos y obtener sus números.")
             return
 
         idx = int(args[0])
-        order_id = context.user_data['cancel_map'].get(idx)
-        if not order_id:
+        item_id = context.user_data['cancel_map'].get(idx)
+        if not item_id:
             await update.message.reply_text("Número inválido. Prueba de nuevo con /cancelar.")
             return
 
-        result_text = cancel_order_api(order_id)
+        result_text = delete_order_item_api(item_id)
         await update.message.reply_text(result_text, parse_mode=None)
 
         # Limpiar cache
