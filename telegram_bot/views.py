@@ -231,18 +231,35 @@ def chatbot_report_view(request):
                 )
                 
                 response = model.generate_content(prompt)
-                # Simple parsing as the model is instructed to provide sections.
+                
                 analysis_text = response.text
-                gemini_analysis['main_topics'] = analysis_text.split("2.")[0].replace("1. Temas Principales:", "").strip()
-                gemini_analysis['general_sentiment'] = analysis_text.split("3.")[0].split("2.")[-1].replace("Sentimiento General:", "").strip()
-                gemini_analysis['improvement_suggestions'] = analysis_text.split("3.")[-1].replace("Sugerencias de Mejora:", "").strip()
+                
+                # Parsing más robusto para la respuesta del modelo
+                # Se busca cada sección por su título para evitar errores si el formato cambia
+                topics_part = analysis_text.split("Sentimiento General:")[0]
+                sentiment_part = analysis_text.split("Sugerencias de Mejora:")[0]
+                suggestions_part = analysis_text
+
+                if "Temas Principales:" in topics_part:
+                    gemini_analysis['main_topics'] = topics_part.replace("1. Temas Principales:", "").strip()
+                
+                if "Sentimiento General:" in sentiment_part:
+                    gemini_analysis['general_sentiment'] = sentiment_part.split("Sentimiento General:")[-1].strip()
+                
+                if "Sugerencias de Mejora:" in suggestions_part:
+                    gemini_analysis['improvement_suggestions'] = suggestions_part.split("Sugerencias de Mejora:")[-1].strip()
+
             else:
                 gemini_analysis['main_topics'] = "No hay suficientes mensajes de usuarios para analizar."
+                gemini_analysis['general_sentiment'] = "N/A"
+                gemini_analysis['improvement_suggestions'] = "N/A"
 
         except Exception as e:
             # Manejo de error si la API de Gemini falla
             error_message = f"Error al contactar la API de Gemini: {e}"
             gemini_analysis['main_topics'] = error_message
+            gemini_analysis['general_sentiment'] = "Error"
+            gemini_analysis['improvement_suggestions'] = "Error"
             logger.error(error_message)
 
     context = { 
