@@ -213,7 +213,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error al crear nueva conversación en /start: {e}")
         
     welcome_text = (
-        f"¡Hola {user.first_name}! 👋 Soy tu asistente de compras virtual.\n\n"
+        f"¡Hola {user.first_name}! 👋 Soy el asistente de compras virtual de TechRetail.\n\n"
         "Puedo ayudarte con lo siguiente:\n"
         "✅ `/productos` - Ver todos nuestros artículos.\n"
         "✅ `/reservar <ID> <cantidad>` - Asegura un producto.\n"
