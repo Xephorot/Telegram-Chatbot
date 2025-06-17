@@ -228,4 +228,16 @@ La API REST del backend está disponible en las siguientes rutas (usando tu URL 
 
 ## Licencia
 
-Este proyecto está licenciado bajo [MIT License](LICENSE). 
+Este proyecto está licenciado bajo [MIT License](LICENSE).
+
+La licencia MIT es una licencia de software permisiva que permite:
+
+- ✅ Usar el código para proyectos comerciales
+- ✅ Modificar el código según tus necesidades
+- ✅ Distribuir copias del código original o modificado
+- ✅ Incluir el código en proyectos con licencias diferentes
+- ✅ Hacer cambios privados sin compartir las modificaciones
+
+Con la única condición de que se incluya el aviso de copyright y permiso original en todas las copias o partes sustanciales del software.
+
+Esta licencia no proporciona garantías de ningún tipo y los autores no son responsables por el uso del software. 
